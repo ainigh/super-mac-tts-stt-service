@@ -14,7 +14,7 @@ COMMIT="${COMMIT:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 # The branch the app's updater follows.
 BRANCH="${BRANCH:-main}"
 NAME=SuperVoice
-APP="build/$NAME.app"
+APP="build/$NAME.app" 
 
 # FluidAudio (the voices) needs Swift 6: an older Swift stops while resolving packages ("using
 # Swift tools version 6.0.0 but the installed version is 5.10"). When the Swift on the PATH is
