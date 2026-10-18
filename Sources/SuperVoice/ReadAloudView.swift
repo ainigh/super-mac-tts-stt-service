@@ -98,9 +98,10 @@ struct ReadAloudView: View {
             } catch {
                 problem = error.localizedDescription
             }
+            let outcome = problem.map { "Couldn't save: \($0)" } ?? "Saved \(url.lastPathComponent)"
             await MainActor.run {
                 saving = false
-                flash(problem.map { "Couldn't save: \($0)" } ?? "Saved \(url.lastPathComponent)")
+                flash(outcome)
             }
         }
     }

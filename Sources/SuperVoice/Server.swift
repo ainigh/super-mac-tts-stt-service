@@ -66,7 +66,10 @@ final class APIServer {
     }
 
     func stop() {
-        guard let listener else { return }
+        guard let listener else {
+            report(.stopped)          // after a failure: the panel stops showing it
+            return
+        }
         self.listener = nil
         listener.cancel()
         queue.async {

@@ -197,7 +197,7 @@ struct TranscribeView: View {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = Self.types
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         guard panel.runModal() == .OK else { return }
         job.add(panel.urls)
     }

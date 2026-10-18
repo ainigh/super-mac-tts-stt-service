@@ -81,7 +81,7 @@ enum Windows {
     private static let closer = Closer()
 
     static func show(_ kind: Kind) {
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         if let w = open[kind] {
             w.makeKeyAndOrderFront(nil)
             return
@@ -203,7 +203,7 @@ enum Files {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = name.replacingOccurrences(of: "/", with: "-") + "." + ext
         panel.canCreateDirectories = true
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         guard panel.runModal() == .OK, let url = panel.url else { return }
         try? Data(text.utf8).write(to: url, options: .atomic)
     }
