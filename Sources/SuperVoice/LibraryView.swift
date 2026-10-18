@@ -208,6 +208,8 @@ private struct Detail: View {
     var close: () -> Void
     var delete: () -> Void
     @State private var note: String?
+    /// The item as the library last had it: what's edited here is what differs from it.
+    @State private var saved: LibraryRecord?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -266,6 +268,13 @@ private struct Detail: View {
         .onChange(of: item.text) { _, _ in saveSoon() }
         .onChange(of: item.title) { _, _ in saveSoon() }
         .onDisappear(perform: save)
+        .onAppear { saved = item }
+        .onReceive(library.$items) { items in
+            // Changed elsewhere (the board adds to its note): taken in, unless it's being edited here.
+            guard let fresh = items.first(where: { $0.id == item.id }), let was = saved, fresh != was else { return }
+            if item == was { item = fresh }
+            saved = fresh
+        }
     }
 
     private var meta: String {
@@ -290,7 +299,10 @@ private struct Detail: View {
         guard library.item(item.id) != item else { return }
         if item.title.trimmingCharacters(in: .whitespaces).isEmpty { item.title = LibraryRecord.title(for: item.text) }
         library.save(item)
-        if let fresh = library.item(item.id) { item = fresh }      // its new modified date
+        if let fresh = library.item(item.id) {      // its new modified date
+            item = fresh
+            saved = fresh
+        }
     }
 
     private func flash(_ s: String) {

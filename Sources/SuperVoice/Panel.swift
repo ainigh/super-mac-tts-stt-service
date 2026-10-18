@@ -48,8 +48,8 @@ struct PanelView: View {
                 Label("Listen", systemImage: board.listening ? "ear.fill" : "ear")
             }
             .buttonStyle(PillButton(tint: Palette.pink, filled: board.listening))
-            .help(board.listening ? "Always listening: what you say goes on the board. Click to stop."
-                                  : "Always listen: what you say goes on the board (say “mouse” to open or close this)")
+            .help(board.listening ? "Always listening: say “mouse”, then talk, and it goes in the board's note. Click to stop."
+                                  : "Always listen: say “mouse”, then talk, and it goes in the board's note")
             if !board.listening {
                 Button {
                     board.pinned.toggle()
@@ -57,7 +57,7 @@ struct PanelView: View {
                     Image(systemName: board.pinned ? "sidebar.right" : "rectangle.split.3x1")
                 }
                 .buttonStyle(PillButton(tint: Palette.violet, filled: board.pinned))
-                .help(board.pinned ? "Hide the board" : "Show the board (voice commands, entries)")
+                .help(board.pinned ? "Hide the board" : "Show the board (voice commands, the note)")
             }
             Button(service.wantsServing ? "Stop" : "Start") {
                 service.wantsServing ? service.stopServing() : service.startServing()

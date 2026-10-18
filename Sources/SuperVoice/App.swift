@@ -70,16 +70,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Super Voice")
         image?.isTemplate = true
         item.button?.image = image
-        // Something said is waiting for an answer, and the panel's closed: a dot says so.
-        item.button?.title = board.pending != nil && !(panel?.isVisible ?? false) ? " •" : ""
         var tip = Service.shared.isServing ? "Super Voice: serving at \(Service.shared.baseURL)" : "Super Voice: not serving"
-        if board.listening { tip += "\nAlways listening (say “mouse” to open or close the panel)" }
+        if board.listening { tip += "\nAlways listening (say “mouse”, then talk: it goes in the board's note)" }
         item.button?.toolTip = tip
     }
 
     @objc private func toggle() {
         panel.isVisible ? hide() : show()
     }
+
+    /// The panel's open: what's said goes on the board.
+    var panelShown: Bool { panel?.isVisible ?? false }
 
     /// "Mouse": opens it without taking the keyboard from the app you're in, or closes it.
     func togglePanel(byVoice: Bool) {
@@ -105,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func hide() {
         panel.orderOut(nil)
+        BoardModel.shared.panelClosed()
         if let outsideClicks { NSEvent.removeMonitor(outsideClicks) }
         outsideClicks = nil
         idleTimer?.invalidate()

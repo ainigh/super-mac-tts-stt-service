@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import VoiceCore
 
-/// Column 2: the voice commands. A first word that's one of these files what follows under it;
-/// click one to see what's filed under it.
+/// Column 2: the voice commands, the subtitles of the note. Said first, one files what follows
+/// under it; anything else goes under "search". Click one to see what's under it.
 struct CommandsColumn: View {
     @ObservedObject var board = BoardModel.shared
     @State private var newWord = ""
@@ -11,7 +11,7 @@ struct CommandsColumn: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionTitle("Voice commands")
-            Text("Start with one of these to file what you say under it. Anything else goes under #note.")
+            Text("Say one of these first and what follows goes in the note under it. Anything else goes under search, and is searched with.")
                 .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
                 TextField("Add a word", text: $newWord)
@@ -26,18 +26,20 @@ struct CommandsColumn: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(board.commands, id: \.self) { word in
+                    ForEach(board.subtitles, id: \.self) { word in
+                        let search = word == Board.searchSubtitle
                         CommandRow(word: word, count: board.count(word), active: isActive(word),
-                                   select: { board.selectedTag = board.selectedTag == word ? nil : word },
-                                   remove: { board.removeCommand(word) })
+                                   symbol: search ? "magnifyingglass" : "text.bubble.fill",
+                                   select: { board.selectedSubtitle = board.selectedSubtitle == word ? nil : word },
+                                   remove: search ? nil : { board.removeCommand(word) })
                     }
                 }
             }
             Spacer(minLength: 0)
             VStack(alignment: .leading, spacing: 5) {
                 SectionTitle("Always there")
-                Hint(word: Board.wakeWord, does: "opens or closes this panel")
-                Hint(word: "add · open · no · copy", does: "answer what's pending")
+                Hint(word: Board.wakeWord, does: "opens or closes this panel; then just talk")
+                Hint(word: "open · copy · no", does: "answer what was just added")
             }
             Toggle("Sounds", isOn: $board.sounds).toggleStyle(.checkbox).font(.system(size: 11))
         }
@@ -45,8 +47,9 @@ struct CommandsColumn: View {
     }
 
     private func isActive(_ word: String) -> Bool {
-        if let p = board.pending { return p.command == word }
-        return board.selectedTag == word
+        if let t = board.typed { return t.subtitle == word }
+        if let a = board.added { return a.heard.subtitle == word }
+        return board.selectedSubtitle == word
     }
 
     private func addWord() {
@@ -59,18 +62,20 @@ private struct CommandRow: View {
     var word: String
     var count: Int
     var active: Bool
+    var symbol: String
     var select: () -> Void
-    var remove: () -> Void
+    /// nil: it can't be removed.
+    var remove: (() -> Void)?
     @State private var hover = false
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "text.bubble.fill").font(.system(size: 11)).foregroundStyle(active ? .white : Palette.violet)
+            Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(active ? .white : Palette.violet)
             Text(word).font(.system(size: 13, weight: .semibold)).foregroundStyle(active ? .white : .primary)
             Spacer()
-            if hover && !active {
+            if hover && !active, let remove {
                 Button(action: remove) { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.borderless).foregroundStyle(.secondary).help("Remove “\(word)” (what's filed under it stays)")
+                    .buttonStyle(.borderless).foregroundStyle(.secondary).help("Remove “\(word)” (what's under it in the note stays)")
             } else {
                 Text("\(count)").font(.system(size: 11, design: .rounded)).foregroundStyle(active ? .white.opacity(0.85) : .secondary)
             }
@@ -96,8 +101,8 @@ private struct Hint: View {
     }
 }
 
-/// Column 3: the pending entry on top (said or typed; edit it before adding), then the entries,
-/// searched with it.
+/// Column 3: a box to type in (Return adds it, the same as saying it), what was just added, and
+/// then what a search found in the note, or the note's lines.
 struct EntriesColumn: View {
     @ObservedObject var board = BoardModel.shared
     @FocusState private var typing: Bool
@@ -107,14 +112,14 @@ struct EntriesColumn: View {
             HStack {
                 SectionTitle(title)
                 Spacer()
-                if let tag = board.selectedTag, board.pending == nil {
-                    Button { board.selectedTag = nil } label: {
-                        HStack(spacing: 3) { Text("#\(tag)"); Image(systemName: "xmark") }
+                if let subtitle = board.selectedSubtitle, board.added == nil {
+                    Button { board.selectedSubtitle = nil } label: {
+                        HStack(spacing: 3) { Text(subtitle); Image(systemName: "xmark") }
                     }
                     .buttonStyle(Chip(selected: true, tint: Palette.violet))
                 }
             }
-            pendingCard
+            typeCard
             if board.listening, !board.hearing.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "waveform").foregroundStyle(Palette.pink)
@@ -125,16 +130,20 @@ struct EntriesColumn: View {
             if let notice = board.notice {
                 Text(notice).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.green)
             }
+            if let a = board.added {
+                LineRow(hit: Board.Hit(spot: a.spot, subtitle: a.heard.subtitle, line: a.line, sentence: a.line),
+                        badge: "JUST ADDED", tint: Palette.violet,
+                        open: { board.openTop() }, copy: { board.copyText(a.line) }, delete: { board.no() })
+            }
             let results = board.results
             if results.isEmpty {
-                Text(board.pending == nil ? "Nothing here yet. Say something, or type it above." : "Nothing matches yet.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary).padding(.top, 6)
+                Text(empty).font(.system(size: 12)).foregroundStyle(.secondary).padding(.top, 6)
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(results.prefix(200).enumerated()), id: \.element.id) { i, r in
-                        EntryRow(record: r, top: board.pending != nil && i == 0,
-                                 open: { board.open(r) }, copy: { board.copyText(r.text) }, delete: { board.delete(r) })
+                    ForEach(Array(results.prefix(200).enumerated()), id: \.element) { i, hit in
+                        LineRow(hit: hit, badge: searching && i == 0 ? "TOP MATCH" : nil, tint: Palette.green,
+                                open: { board.open(hit) }, copy: { board.copyText(hit.sentence) }, delete: { board.delete(hit) })
                     }
                 }
             }
@@ -143,45 +152,55 @@ struct EntriesColumn: View {
         .padding(16)
     }
 
+    private var searching: Bool { board.added?.heard.isSearch == true }
+
     private var title: String {
-        if board.pending != nil { return "Matches" }
-        return board.selectedTag == nil ? "Entries" : "Filed under"
+        if let a = board.added { return a.heard.isSearch ? "Matches" : "Under \(a.heard.subtitle)" }
+        return board.selectedSubtitle.map { "Under \($0)" } ?? "The note"
     }
 
-    /// The pending entry: a field you can type in (what's said lands here too).
-    private var pendingCard: some View {
-        let p = board.pending
+    private var empty: String {
+        if searching { return "Nothing else in the note matches." }
+        if board.added != nil { return "Nothing else under it yet." }
+        return board.listening ? "Nothing here yet. Say “mouse”, then talk, or type above." : "Nothing here yet. Type above."
+    }
+
+    /// The box: what's typed, with the subtitle it'll go under.
+    private var typeCard: some View {
+        let t = board.typed
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Text("#\(p?.tag ?? Board.defaultTag)")
+                Text(t?.subtitle ?? Board.searchSubtitle)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(Capsule().fill(p == nil ? Color.secondary.opacity(0.5) : Palette.violet))
-                Text(p == nil ? (board.listening ? "Listening: say something, or type" : "Type a new entry")
-                              : "Not added yet: add, open, no or copy")
+                    .background(Capsule().fill(t == nil ? Color.secondary.opacity(0.5) : Palette.violet))
+                Text(t == nil ? (board.listening ? "Listening: talk, or type" : "Type, then Return")
+                              : "Return adds it to the note")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
                 Spacer()
             }
-            TextField("New entry", text: $board.entry, axis: .vertical)
+            TextField("Say or type", text: $board.entry, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14, weight: .medium))
                 .lineLimit(1...5)
                 .focused($typing)
-                .onSubmit { board.add() }
-                .onExitCommand { board.no() }
+                .onSubmit { board.take(board.entry) }
+                .onExitCommand { board.entry = "" }
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(Palette.violet.opacity(p == nil ? 0.04 : 0.12)))
+            .fill(Palette.violet.opacity(t == nil ? 0.04 : 0.12)))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .strokeBorder(Palette.violet.opacity(p == nil ? 0.2 : 0.7), style: StrokeStyle(lineWidth: 1.5, dash: p == nil ? [5, 4] : [])))
+            .strokeBorder(Palette.violet.opacity(t == nil ? 0.2 : 0.7), style: StrokeStyle(lineWidth: 1.5, dash: t == nil ? [5, 4] : [])))
     }
 }
 
-private struct EntryRow: View {
-    var record: LibraryRecord
-    var top: Bool
+/// A line of the note (or the sentence of it that matched), with its subtitle.
+private struct LineRow: View {
+    var hit: Board.Hit
+    var badge: String?
+    var tint: Color
     var open: () -> Void
     var copy: () -> Void
     var delete: () -> Void
@@ -191,29 +210,27 @@ private struct EntryRow: View {
         HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    if let tag = record.tag {
-                        Text("#\(tag)").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.violet)
-                    }
-                    if top { Text("TOP MATCH").font(.system(size: 9, weight: .bold)).foregroundStyle(Palette.green) }
+                    Text(hit.subtitle.isEmpty ? "note" : hit.subtitle)
+                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.violet)
+                    if let badge { Text(badge).font(.system(size: 9, weight: .bold)).foregroundStyle(tint) }
                     kindBadge
                     Spacer()
-                    Text(record.created, style: .relative).font(.system(size: 10)).foregroundStyle(.tertiary)
                 }
-                Text(record.text).font(.system(size: 13)).lineLimit(3)
+                Text(hit.sentence).font(.system(size: 13)).lineLimit(3)
             }
             if hover {
                 VStack(spacing: 6) {
                     Button(action: copy) { Image(systemName: "doc.on.doc") }.buttonStyle(.borderless).help("Copy")
-                    Button(action: delete) { Image(systemName: "trash") }.buttonStyle(.borderless).help("Delete")
+                    Button(action: delete) { Image(systemName: "trash") }.buttonStyle(.borderless).help("Take it out of the note")
                 }
                 .foregroundStyle(.secondary)
             }
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(top ? Palette.green.opacity(0.1) : Color.primary.opacity(hover ? 0.08 : 0.04)))
+            .fill(badge != nil ? tint.opacity(0.1) : Color.primary.opacity(hover ? 0.08 : 0.04)))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(top ? Palette.green.opacity(0.6) : .clear, lineWidth: 1))
+            .strokeBorder(badge != nil ? tint.opacity(0.6) : .clear, lineWidth: 1))
         .contentShape(Rectangle())
         .onTapGesture(perform: open)
         .onHover { hover = $0 }
@@ -221,7 +238,7 @@ private struct EntryRow: View {
     }
 
     @ViewBuilder private var kindBadge: some View {
-        switch Board.action(for: record.text) {
+        switch Board.action(for: hit.line) {
         case .browse: Image(systemName: "link").font(.system(size: 9)).foregroundStyle(Palette.blue)
         case .http(let method, _, _): Text(method).font(.system(size: 9, weight: .bold, design: .monospaced)).foregroundStyle(Palette.orange)
         case .show: EmptyView()
@@ -229,52 +246,50 @@ private struct EntryRow: View {
     }
 
     private var help: String {
-        switch Board.action(for: record.text) {
+        switch Board.action(for: hit.line) {
         case .browse: return "Click to open in your browser"
         case .http(let method, let url, _): return "Click to call \(method) \(url.absoluteString)"
-        case .show: return "Click to open"
+        case .show: return "Click to open the note here"
         }
     }
 }
 
-/// Column 4: the options for the pending entry, or what was opened.
+/// Column 4: the options for what was just added, or what was opened.
 struct OptionsColumn: View {
     @ObservedObject var board = BoardModel.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let p = board.pending {
-                options(p)
-            } else if let opened = board.opened {
+            if let opened = board.opened {
                 OpenedView(opened: opened)
+            } else if let a = board.added {
+                options(a)
             }
             Spacer(minLength: 0)
         }
         .padding(16)
     }
 
-    private func options(_ p: Board.Heard) -> some View {
-        let top = board.top
+    private func options(_ a: BoardModel.Added) -> some View {
+        let top = board.hits.first
         return VStack(alignment: .leading, spacing: 10) {
             SectionTitle("What now?")
-            OptionButton(option: .add, title: "Add", detail: p.text.isEmpty ? "Say something after “\(p.tag)”" : "As a new entry under #\(p.tag)",
-                         symbol: "plus.circle.fill", tint: Palette.violet, enabled: !p.text.isEmpty)
-            OptionButton(option: .open, title: "Open", detail: top.map { describe($0) } ?? "Nothing matches",
-                         symbol: "arrow.up.forward.app.fill", tint: Palette.blue, enabled: top != nil)
-            OptionButton(option: .no, title: "No", detail: "Drop it", symbol: "xmark.circle.fill",
-                         tint: .secondary, enabled: true)
-            OptionButton(option: .copy, title: "Copy", detail: top.map { "The top match: \(String($0.text.prefix(60)))" } ?? "What you said",
-                         symbol: "doc.on.doc.fill", tint: Palette.teal, enabled: true)
-            Text(board.listening ? "Say the option, or click it." : "Click an option.")
+            OptionButton(option: .open, title: "Open", detail: top.map { describe($0) } ?? "The note, where this went",
+                         symbol: "arrow.up.forward.app.fill", tint: Palette.blue)
+            OptionButton(option: .copy, title: "Copy", detail: top.map { "The top match: \(String($0.sentence.prefix(60)))" } ?? "What you said",
+                         symbol: "doc.on.doc.fill", tint: Palette.teal)
+            OptionButton(option: .no, title: "No", detail: "Take it back out of the note", symbol: "arrow.uturn.backward.circle.fill",
+                         tint: .secondary)
+            Text(board.listening ? "Say the option, or click it. Or just keep talking." : "Click an option.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
         }
     }
 
-    private func describe(_ r: LibraryRecord) -> String {
-        switch Board.action(for: r.text) {
+    private func describe(_ hit: Board.Hit) -> String {
+        switch Board.action(for: hit.line) {
         case .browse(let url): return "Open \(url.host ?? "the link") in your browser"
         case .http(let method, let url, _): return "Call \(method) \(url.host ?? "")\(url.path)"
-        case .show: return "The top match: \(String(r.text.prefix(60)))"
+        case .show: return "The note, at the top match: \(String(hit.sentence.prefix(60)))"
         }
     }
 }
@@ -286,7 +301,6 @@ private struct OptionButton: View {
     var detail: String
     var symbol: String
     var tint: Color
-    var enabled: Bool
     @State private var hover = false
 
     var body: some View {
@@ -307,13 +321,11 @@ private struct OptionButton: View {
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.45)
         .onHover { hover = $0 }
     }
 }
 
-/// An opened entry (with Copy), or the answer to a GET / POST.
+/// The note, scrolled to where it matched (with Copy), or the answer to a GET / POST.
 private struct OpenedView: View {
     @ObservedObject var board = BoardModel.shared
     @EnvironmentObject var service: Service
@@ -327,17 +339,14 @@ private struct OpenedView: View {
                 Button { board.opened = nil } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
             }
             switch opened {
-            case .record(let r):
-                if let tag = r.tag { Text("#\(tag)").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.violet) }
-                ScrollView {
-                    Text(r.text).font(.system(size: 14)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                }
+            case .note(let focus):
+                NoteView(note: board.note, focus: focus)
                 HStack(spacing: 8) {
-                    Button("Copy") { board.copyText(r.text) }.buttonStyle(PillButton(tint: Palette.teal, filled: true))
-                    Button("Read aloud") { service.reader.say(r.text, voice: service.voice, speed: service.settings.speed) }
+                    Button(focus == nil ? "Copy all" : "Copy") { board.copyText(focus?.sentence ?? board.note.text) }
+                        .buttonStyle(PillButton(tint: Palette.teal, filled: true))
+                    Button("Read aloud") { service.reader.say(focus?.line ?? board.note.text, voice: service.voice, speed: service.settings.speed) }
                         .buttonStyle(PillButton(tint: .secondary, filled: false))
                     Spacer()
-                    Button { board.delete(r) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Delete")
                 }
             case .http(let call):
                 Text(call.request).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).lineLimit(3)
@@ -373,8 +382,57 @@ private struct OpenedView: View {
 
     private var heading: String {
         switch opened {
-        case .record: return "Opened"
+        case .note: return Board.noteTitle
         case .http(let call): return call.method
         }
+    }
+}
+
+/// The whole note, subtitle by subtitle, scrolled to the focused line with its sentence picked out.
+private struct NoteView: View {
+    var note: Board.Note
+    var focus: Board.Hit?
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(note.sections.enumerated()), id: \.offset) { s, section in
+                        if !section.subtitle.isEmpty {
+                            Text(section.subtitle)
+                                .font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.violet)
+                                .padding(.top, s == 0 ? 0 : 10)
+                        }
+                        ForEach(Array(section.lines.enumerated()), id: \.offset) { l, line in
+                            let spot = Board.Note.Spot(section: s, line: l)
+                            Text(text(line, focused: focus?.spot == spot))
+                                .font(.system(size: 13))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 6).padding(.vertical, 3)
+                                .background(RoundedRectangle(cornerRadius: 6)
+                                    .fill(focus?.spot == spot ? Palette.orange.opacity(0.12) : .clear))
+                                .id(spot)
+                        }
+                    }
+                }
+            }
+            .onAppear { scroll(proxy) }
+            .onChange(of: focus) { _, _ in scroll(proxy) }
+        }
+    }
+
+    /// The line, with the sentence that matched picked out.
+    private func text(_ line: String, focused: Bool) -> AttributedString {
+        var a = AttributedString(line)
+        if focused, let sentence = focus?.sentence, sentence != line, let r = a.range(of: sentence) {
+            a[r].backgroundColor = Palette.orange.opacity(0.35)
+        }
+        return a
+    }
+
+    private func scroll(_ proxy: ScrollViewProxy) {
+        guard let spot = focus?.spot else { return }
+        DispatchQueue.main.async { withAnimation { proxy.scrollTo(spot, anchor: .center) } }
     }
 }
