@@ -5,12 +5,22 @@ import VoiceCore
 
 /// Listens to the microphone and writes down what's said. The audio is cut into phrases at the
 /// pauses (PhraseCutter) and each phrase is written down whole by Parakeet, in order; while a
-/// phrase is still being said, it's written down every so often to show it live. It keeps going
-/// until it's stopped; nothing said is thrown away (phrases wait while the model downloads, and
-/// stopping writes down the last one). A microphone change (AirPods connecting) carries on.
+/// phrase is still being said, it's written down every so often to show it live. Nothing said is
+/// thrown away (phrases wait while the model downloads, and stopping writes down the last one). A
+/// microphone change (AirPods connecting) carries on.
+///
+/// Dictating, `text` grows until it's stopped. With `pauseToEnd` set (always listening), a pause
+/// that long ends what was said: it goes to `onUtterance` and listening carries on fresh.
 /// On the main thread.
 final class Recorder: ObservableObject {
     static let shared = Recorder()
+
+    let pauseToEnd: Double?
+    var onUtterance: ((String) -> Void)?
+
+    init(pauseToEnd: Double? = nil) {
+        self.pauseToEnd = pauseToEnd
+    }
 
     @Published private(set) var on = false
     /// Stopped, and the last words are still being written down.
@@ -32,7 +42,8 @@ final class Recorder: ObservableObject {
 
     private var done = ""
     private var guess = ""
-    private var waiting: [[Float]] = []
+    /// Phrases waiting to be written down, oldest first (`send`: it ends an utterance).
+    private var waiting: [(samples: [Float], send: Bool)] = []
     private var writing = false
     /// Counts clears, so what's written down for something cleared is dropped.
     private var generation = 0
@@ -56,7 +67,7 @@ final class Recorder: ObservableObject {
     func stop() {
         guard on else { return }
         closeMic()
-        if let last = cutter.flush() { enqueue(last) }
+        if let last = cutter.flush() { enqueue(last, send: pauseToEnd != nil) }
         cutter.reset()
         finishing = writing || !waiting.isEmpty
     }
@@ -91,7 +102,7 @@ final class Recorder: ObservableObject {
         }
         rewiring = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine,
                                                           queue: .main) { [weak self] _ in self?.rewire() }
-        cutter = PhraseCutter(pause: 0.8)
+        cutter = PhraseCutter(pause: pauseToEnd ?? 0.8)
         on = true
         started = Date()
         finishing = false
@@ -142,19 +153,21 @@ final class Recorder: ObservableObject {
             guard self.on else { return }
             self.level = self.level * 0.5 + l * 0.5
             self.heardSeconds += Double(samples.count) / Double(PCM.listenRate)
-            for phrase in self.cutter.add(samples) { self.enqueue(phrase.samples) }
+            for phrase in self.cutter.add(samples) {
+                self.enqueue(phrase.samples, send: phrase.paused && self.pauseToEnd != nil)
+            }
         }
     }
 
-    private func enqueue(_ samples: [Float]) {
+    private func enqueue(_ samples: [Float], send: Bool = false) {
         phraseNumber += 1
-        waiting.append(samples)
+        waiting.append((samples, send))
         writeNext()
     }
 
     /// Writes down the oldest waiting phrase, then the next, one at a time so they stay in order.
     private func writeNext() {
-        guard !writing, let samples = waiting.first else {
+        guard !writing, let item = waiting.first else {
             if !writing && waiting.isEmpty { finishing = false }
             return
         }
@@ -164,16 +177,16 @@ final class Recorder: ObservableObject {
             var said = ""
             var problem: String?
             do {
-                said = try await Neural.shared.write(samples).text
+                said = try await Neural.shared.write(item.samples).text
             } catch {
                 problem = error.localizedDescription
             }
             let heard = said, failure = problem
-            DispatchQueue.main.async { self?.written(heard, problem: failure, generation: mine) }
+            DispatchQueue.main.async { self?.written(heard, send: item.send, problem: failure, generation: mine) }
         }
     }
 
-    private func written(_ said: String, problem: String?, generation mine: Int) {
+    private func written(_ said: String, send: Bool, problem: String?, generation mine: Int) {
         writing = false
         guard mine == generation else {
             writeNext()
@@ -189,6 +202,13 @@ final class Recorder: ObservableObject {
         done = Self.join(done, said.trimmingCharacters(in: .whitespacesAndNewlines))
         if waiting.isEmpty { guess = "" }
         text = Self.join(done, guess)
+        if send {
+            let all = done
+            done = ""
+            guess = ""
+            text = ""
+            if !all.isEmpty { onUtterance?(all) }
+        }
         writeNext()
     }
 

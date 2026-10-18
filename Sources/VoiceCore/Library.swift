@@ -27,9 +27,11 @@ public struct LibraryRecord: Codable, Equatable, Identifiable, Sendable {
     /// Timed lines (transcripts), for subtitles.
     public var segments: [TimedText]?
     public var starred: Bool
+    /// What it was filed under on the board ("note", or the voice command it was said after).
+    public var tag: String?
 
     public init(kind: Kind, text: String, title: String? = nil, created: Date = Date(), duration: Double? = nil,
-                source: String? = nil, segments: [TimedText]? = nil) {
+                source: String? = nil, segments: [TimedText]? = nil, tag: String? = nil) {
         id = UUID()
         self.kind = kind
         self.text = text
@@ -40,6 +42,7 @@ public struct LibraryRecord: Codable, Equatable, Identifiable, Sendable {
         self.source = source
         self.segments = segments
         starred = false
+        self.tag = tag
     }
 
     /// A title from the text's first words: "Remind me to call Sam at four…".
@@ -57,7 +60,7 @@ public struct LibraryRecord: Codable, Equatable, Identifiable, Sendable {
     public func matches(_ query: String) -> Bool {
         let words = query.split(whereSeparator: \.isWhitespace)
         guard !words.isEmpty else { return true }
-        let hay = [title, text, source ?? ""].joined(separator: "\n")
+        let hay = [title, text, source ?? "", tag ?? ""].joined(separator: "\n")
         return words.allSatisfy { hay.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
     }
 }

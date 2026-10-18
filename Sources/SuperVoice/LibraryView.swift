@@ -171,6 +171,7 @@ private struct Card: View {
                     .frame(width: 20, height: 20)
                     .background(tint, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 Text(item.kind.title.uppercased()).font(.system(size: 9, weight: .semibold)).foregroundStyle(tint).kerning(0.5)
+                if let tag = item.tag { Text("#\(tag)").font(.system(size: 9, weight: .semibold)).foregroundStyle(Palette.violet) }
                 Spacer()
                 if item.starred { Image(systemName: "star.fill").font(.system(size: 10)).foregroundStyle(.orange) }
             }

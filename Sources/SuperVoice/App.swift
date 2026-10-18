@@ -19,29 +19,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var item: NSStatusItem!
     private var panel: MenuPanel!
     private var outsideClicks: Any?
+    private var insideActivity: Any?
     private var watching: Set<AnyCancellable> = []
+    /// The panel closes after this long with nothing happening.
+    static let idleClose: TimeInterval = 20
+    private var lastActivity = Date()
+    private var idleTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.target = self
         item.button?.action = #selector(toggle)
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        panel = MenuPanel(content: PanelView(close: { [weak self] in self?.hide() }))
+        item.button?.imagePosition = .imageLeading
+        panel = MenuPanel(content: PanelRoot(close: { [weak self] in self?.hide() },
+                                             resized: { [weak self] size in self?.panel?.fit(size) }))
+        panel.onCancel = { [weak self] in self?.hide() }
         Service.shared.launch()
+        BoardModel.shared.launch()
         Updater.shared.start()
         // The icon says what's going on.
         Service.shared.objectWillChange
-            .merge(with: Recorder.shared.objectWillChange)
+            .merge(with: Recorder.shared.objectWillChange, BoardModel.shared.objectWillChange)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in DispatchQueue.main.async { self?.refreshIcon() } }
             .store(in: &watching)
         refreshIcon()
+        // Anything done in the panel counts as activity.
+        insideActivity = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .rightMouseDown, .keyDown, .scrollWheel]) { [weak self] event in
+            if let self, event.window === self.panel { self.noteActivity() }
+            return event
+        }
     }
 
     private func refreshIcon() {
+        let board = BoardModel.shared
         let symbol: String
         if Recorder.shared.on {
             symbol = "record.circle"
+        } else if board.listening {
+            symbol = "ear"
         } else if Service.shared.isServing {
             symbol = "waveform"
         } else {
@@ -50,26 +67,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Super Voice")
         image?.isTemplate = true
         item.button?.image = image
-        item.button?.toolTip = Service.shared.isServing ? "Super Voice: serving at \(Service.shared.baseURL)" : "Super Voice: not serving"
+        // Something said is waiting for an answer, and the panel's closed: a dot says so.
+        item.button?.title = board.pending != nil && !(panel?.isVisible ?? false) ? " •" : ""
+        var tip = Service.shared.isServing ? "Super Voice: serving at \(Service.shared.baseURL)" : "Super Voice: not serving"
+        if board.listening { tip += "\nAlways listening (say “mouse” to open or close the panel)" }
+        item.button?.toolTip = tip
     }
 
     @objc private func toggle() {
         panel.isVisible ? hide() : show()
     }
 
-    func show() {
+    /// "Mouse": opens it without taking the keyboard from the app you're in, or closes it.
+    func togglePanel(byVoice: Bool) {
+        panel.isVisible ? hide() : show(takeKeyboard: !byVoice)
+    }
+
+    func show(takeKeyboard: Bool = true) {
         guard let button = item.button, let window = button.window else { return }
         let spot = window.convertToScreen(button.convert(button.bounds, to: nil))
-        panel.present(below: spot)
-        outsideClicks = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            self?.hide()
+        panel.present(below: spot, takeKeyboard: takeKeyboard)
+        if outsideClicks == nil {
+            outsideClicks = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+                self?.hide()
+            }
         }
+        noteActivity()
+        idleTimer?.invalidate()
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.checkIdle() }
+        refreshIcon()
     }
 
     func hide() {
         panel.orderOut(nil)
         if let outsideClicks { NSEvent.removeMonitor(outsideClicks) }
         outsideClicks = nil
+        idleTimer?.invalidate()
+        idleTimer = nil
+        refreshIcon()
+    }
+
+    /// Something happened (in the panel, or said): the idle countdown starts again.
+    func noteActivity() {
+        lastActivity = Date()
+    }
+
+    private func checkIdle() {
+        guard panel.isVisible else { return }
+        if Date().timeIntervalSince(lastActivity) >= Self.idleClose { hide() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -101,6 +146,7 @@ final class MenuPanel: NSPanel {
         isOpaque = false
         hasShadow = true
         hidesOnDeactivate = false
+        acceptsMouseMovedEvents = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         let glass = NSVisualEffectView()
         glass.material = .popover
@@ -122,19 +168,32 @@ final class MenuPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
-    /// Shows it under `spot` (the icon, in screen coordinates), kept on that screen.
-    func present(below spot: NSRect) {
-        let size = hosting.fittingSize
-        let screen = NSScreen.screens.first { $0.frame.contains(spot.origin) }?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        var x = spot.midX - size.width / 2
-        x = min(max(x, screen.minX + 8), screen.maxX - size.width - 8)
-        let y = spot.minY - size.height - 6
-        setFrame(NSRect(x: x, y: max(screen.minY + 8, y), width: size.width, height: size.height), display: true)
-        makeKeyAndOrderFront(nil)
+    /// Escape (when nothing in it takes it).
+    var onCancel: (() -> Void)?
+    /// Where it hangs from: the icon's spot on the screen.
+    private var anchor: NSRect = .zero
+
+    /// Shows it under `spot` (the icon, in screen coordinates), its first column under the icon,
+    /// kept on that screen.
+    func present(below spot: NSRect, takeKeyboard: Bool) {
+        anchor = spot
+        fit(hosting.fittingSize)
+        if takeKeyboard { makeKeyAndOrderFront(nil) } else { orderFrontRegardless() }
     }
 
-    /// Escape closes it.
+    /// Takes `size` (columns came or went), its top staying where it is.
+    func fit(_ size: CGSize) {
+        guard size.width > 0, size.height > 0, anchor != .zero else { return }
+        let screen = NSScreen.screens.first { $0.frame.contains(anchor.origin) }?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        var x = anchor.midX - 190                    // the first column (380 wide) centred under the icon
+        x = min(max(x, screen.minX + 8), screen.maxX - size.width - 8)
+        let top = anchor.minY - 6
+        let y = max(screen.minY + 8, top - size.height)
+        let frame = NSRect(x: x, y: y, width: size.width, height: min(size.height, top - screen.minY - 8))
+        if frame != self.frame { setFrame(frame, display: true) }
+    }
+
     override func cancelOperation(_ sender: Any?) {
-        orderOut(nil)
+        onCancel?()
     }
 }

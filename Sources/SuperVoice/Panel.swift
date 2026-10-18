@@ -6,6 +6,7 @@ import VoiceCore
 /// endpoint's switch, and the bottom bar.
 struct PanelView: View {
     @EnvironmentObject var service: Service
+    @ObservedObject var board = BoardModel.shared
     var close: () -> Void
 
     var body: some View {
@@ -41,6 +42,23 @@ struct PanelView: View {
                 }
             }
             Spacer()
+            Button {
+                board.setListening(!board.listening)
+            } label: {
+                Label("Listen", systemImage: board.listening ? "ear.fill" : "ear")
+            }
+            .buttonStyle(PillButton(tint: Palette.pink, filled: board.listening))
+            .help(board.listening ? "Always listening: what you say goes on the board. Click to stop."
+                                  : "Always listen: what you say goes on the board (say “mouse” to open or close this)")
+            if !board.listening {
+                Button {
+                    board.pinned.toggle()
+                } label: {
+                    Image(systemName: board.pinned ? "sidebar.right" : "rectangle.split.3x1")
+                }
+                .buttonStyle(PillButton(tint: Palette.violet, filled: board.pinned))
+                .help(board.pinned ? "Hide the board" : "Show the board (voice commands, entries)")
+            }
             Button(service.wantsServing ? "Stop" : "Start") {
                 service.wantsServing ? service.stopServing() : service.startServing()
             }
@@ -344,4 +362,47 @@ struct PillButton: ButtonStyle {
             .background(Capsule().fill(filled ? tint : Color.primary.opacity(0.07)))
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
+}
+
+/// Everything the panel holds: the first column, and the board's columns beside it when they're
+/// wanted. Reports its size, so the panel fits it as columns come and go.
+struct PanelRoot: View {
+    @ObservedObject var board = BoardModel.shared
+    var close: () -> Void
+    var resized: (CGSize) -> Void
+    @State private var height: CGFloat = 640
+
+    static let boardWidth: CGFloat = 380
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            PanelView(close: close)
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: FirstColumnHeight.self, value: g.size.height)
+                })
+            if board.showsColumns {
+                Divider()
+                CommandsColumn().frame(width: Self.boardWidth, height: height)
+                Divider()
+                EntriesColumn().frame(width: Self.boardWidth, height: height)
+                if board.showsOptions {
+                    Divider()
+                    OptionsColumn().frame(width: Self.boardWidth, height: height)
+                }
+            }
+        }
+        .fixedSize()
+        .onContinuousHover { _ in Main.delegate.noteActivity() }      // looking around counts as activity
+        .onPreferenceChange(FirstColumnHeight.self) { height = $0 }
+        .background(GeometryReader { g in
+            Color.clear
+                .onAppear { resized(g.size) }
+                .onChange(of: g.size) { _, size in resized(size) }
+        })
+    }
+}
+
+private struct FirstColumnHeight: PreferenceKey {
+    static var defaultValue: CGFloat = 640
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
