@@ -65,27 +65,32 @@ Click the waveform in the menu bar:
 
 ## Always listen and the board
 
-**Listen** (the ear, next to Start) keeps the microphone open: each thing you say, ended by a
-pause, lands on the board beside the panel. The panel grows to four columns while it's in use (the
-rectangles button shows the board without listening, to type into it):
+**Listen** (the ear, next to Start) keeps the microphone open. Say **"mouse"** to open the panel
+(it doesn't take the keyboard from the app you're in), then just talk: each thing you say, ended by
+a pause, goes in the board's note, one note kept in sections, each under a subtitle. "Mouse, note
+buy milk" in one go works too. "Mouse" again closes the panel, and so do 20 seconds with nothing
+happening. Nothing is taken while the panel is closed, and neither is what the Mac says itself or
+anything said while dictating. The panel grows to four columns while it's in use (the rectangles
+button shows the board without listening, so you can type into it):
 
-1. **The panel** as before.
-2. **Voice commands**: words you add over time (`notes` to start with). Say one first and what
-   follows is filed under it: "notes, buy milk" goes under `#notes`. Anything else goes under
-   `#note`. Click a command to see what's filed under it.
-3. **Entries**: what you just said (or typed: the box takes typing too, and you can edit what was
-   heard) sits on top, not added yet; under it, the entries searched with it, best match first.
-4. **Options** for it: **Add** (it becomes the newest entry, on top), **Open** (the best match:
-   a link opens in your browser; `GET https://…` or `POST https://… {json}` is called and its answer
-   shown; anything else opens here, with **Copy**), **No** (drop it), **Copy** (the best match, or
-   what you said when nothing matches). Click one, press Return (Add) or Escape (No), or just say
-   it: "add", "open", "no", "copy".
+1. **The panel**, as before.
+2. **Voice commands**: the subtitles (`note` to start with; add more over time). Say one first
+   and what follows goes under it: "note, buy milk" adds "Buy milk" under `note`. Anything else
+   goes under `search`, word for word ("search, …" said first works too). Click one to see what's
+   under it.
+3. **The note**: what was just added, then, for a search, the note's sentences that match it (best
+   match first); for a command, what else is under that subtitle. The box on top takes typing
+   (Return adds it, the same as saying it).
+4. **Options** for what was just added: **Open** opens the note, scrolled to the best match with
+   its sentence picked out (to what was just added when nothing matches). A line that's only a link
+   opens in your browser instead, and `GET https://…` or `POST https://… {json}` is called and its
+   answer shown. **Copy** copies the best match, or what you said. **No** takes it back out of the
+   note. Click one, or just say it: "open", "copy", "no" (said alone, they're never added).
 
-Say **"mouse"** to open the panel (it doesn't take the keyboard from the app you're in) and
-"mouse" again to close it. The panel closes after 20 seconds with nothing happening. While
-something is waiting for an answer and the panel is closed, a dot shows next to the icon (an ear
-while listening). What the Mac says itself, and anything said while dictating, is ignored. Board
-entries are kept in the library too (as notes, with their tag).
+Everything said is kept. The note is in the library too (a note called "Board"), where it can be
+read back, edited or saved as a file: `## note` starts the section under `note`, and each line
+under it is one thing said. Entries from before the board kept one note are folded into it once,
+under what they were filed under, and stay in the library as notes of their own.
 
 ## Working on it
 

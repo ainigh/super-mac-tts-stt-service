@@ -3,15 +3,16 @@ import Combine
 import Foundation
 import VoiceCore
 
-/// The board beside the panel: voice commands (column 2), entries with the pending one on top
-/// (column 3), and the options for it, or what was opened (column 4). With always listen on, each
-/// thing said becomes the pending entry; "mouse" said alone opens or closes the panel; while an
-/// entry is pending, "add", "open", "no" or "copy" said alone picks that option.
-/// On the main thread.
+/// The board beside the panel: voice commands (column 2), the note (column 3: what was just added,
+/// and what a search found), and the options for it, or the note opened where it matched (column 4).
+/// With always listen on and the panel open ("mouse" opens it), each thing said goes in the note:
+/// under its first word when that's a command, else under "search", and then it's searched with.
+/// "mouse" said alone opens or closes the panel; "open", "copy" or "no" said alone answers what
+/// was just added. On the main thread.
 final class BoardModel: ObservableObject {
     static let shared = BoardModel()
 
-    /// The voice commands: a first word that files what follows under it.
+    /// The voice commands: a first word that's the subtitle what follows goes under.
     @Published private(set) var commands: [String]
     /// Always listening (and wanted so across launches).
     @Published private(set) var listening: Bool
@@ -19,19 +20,29 @@ final class BoardModel: ObservableObject {
     @Published var pinned: Bool { didSet { defaults.set(pinned, forKey: "boardPinned") } }
     /// Little sounds when something's heard and added.
     @Published var sounds: Bool { didSet { defaults.set(sounds, forKey: "boardSounds") } }
-    /// The pending entry, as said or typed (with its command word, if any). Empty: nothing pending.
+    /// What's being typed (Return adds it, the same as saying it).
     @Published var entry = "" { didSet { if entry != oldValue { activity() } } }
-    /// A command clicked in column 2: the entries are filtered to it while nothing is pending.
-    @Published var selectedTag: String?
+    /// A subtitle clicked in column 2: column 3 shows only what's under it.
+    @Published var selectedSubtitle: String?
+    /// What was just added, until it's answered or something else is.
+    @Published private(set) var added: Added?
     /// What's open in column 4.
     @Published var opened: Opened?
-    /// A line saying what just happened ("Copied", "Added under #notes").
+    /// A line saying what just happened ("Copied", "Added under note").
     @Published private(set) var notice: String?
     /// What the always-listener is hearing right now, before the pause that ends it.
     @Published private(set) var hearing = ""
 
+    struct Added: Equatable {
+        var heard: Board.Heard
+        /// Where it went in the note, and as it was written there.
+        var spot: Board.Note.Spot
+        var line: String
+    }
+
     enum Opened: Equatable {
-        case record(LibraryRecord)
+        /// The note, scrolled to a line (with the sentence that matched picked out).
+        case note(focus: Board.Hit?)
         case http(HTTPCall)
     }
 
@@ -86,6 +97,7 @@ final class BoardModel: ObservableObject {
 
     /// At launch: listen if it was listening.
     func launch() {
+        foldOldEntries()
         if listening { resume() }
     }
 
@@ -96,30 +108,68 @@ final class BoardModel: ObservableObject {
         listener.start()
     }
 
+    /// The panel closed: what was just added isn't waiting for an answer any more.
+    func panelClosed() {
+        added = nil
+    }
+
     /// Columns 2 and 3 show.
     var showsColumns: Bool { listening || pinned }
     /// Column 4 shows.
-    var showsOptions: Bool { pending != nil || opened != nil }
+    var showsOptions: Bool { added != nil || opened != nil }
 
-    // MARK: The pending entry and the search
+    // MARK: The note
 
-    /// The pending entry, read against the commands.
-    var pending: Board.Heard? {
+    /// The library record that holds the note (none until something's added).
+    private var noteRecord: LibraryRecord? { Library.shared.items.first { $0.tag == Board.noteTag } }
+
+    var note: Board.Note { noteRecord.map { Board.Note(text: $0.text) } ?? Board.Note() }
+
+    private func save(_ note: Board.Note) {
+        var record = noteRecord ?? LibraryRecord(kind: .note, text: "", title: Board.noteTitle, tag: Board.noteTag)
+        record.text = note.text
+        Library.shared.save(record)
+    }
+
+    /// Entries from before the board kept one note go into it once, oldest first, under what they
+    /// were filed under; they stay in the library as notes of their own.
+    private func foldOldEntries() {
+        let old = Library.shared.items.filter { $0.tag != nil && $0.tag != Board.noteTag }.sorted { $0.created < $1.created }
+        guard !old.isEmpty else { return }
+        var note = self.note
+        for r in old where !r.text.isEmpty { note.append(r.text, under: r.tag ?? Board.defaultCommands[0]) }
+        save(note)
+        for var r in old {
+            r.tag = nil
+            Library.shared.save(r)
+        }
+    }
+
+    /// What's being typed, read against the commands.
+    var typed: Board.Heard? {
         entry.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : Board.parse(entry, commands: commands)
     }
 
-    /// The entries, searched with the pending one (or filtered to the clicked command).
-    var results: [LibraryRecord] {
-        if let p = pending { return Board.rank(Library.shared.items, query: p.text, tag: p.command) }
-        return Board.rank(Library.shared.items, query: "", tag: selectedTag)
+    /// What a search just added found in the note, best first.
+    var hits: [Board.Hit] {
+        guard let a = added, a.heard.isSearch else { return [] }
+        return note.search(a.heard.text, skipping: a.spot)
     }
 
-    var top: LibraryRecord? { pending == nil ? nil : results.first }
-
-    /// How many entries are filed under `tag`.
-    func count(_ tag: String) -> Int {
-        Library.shared.items.filter { r in r.tag.map { Board.sameWord($0, tag) } ?? false }.count
+    /// Column 3: what a search found, else the lines under the subtitle just added to (or the one
+    /// clicked), else the whole note.
+    var results: [Board.Hit] {
+        if let a = added { return a.heard.isSearch ? hits : note.lines(under: a.heard.subtitle).filter { $0.spot != a.spot } }
+        return note.lines(under: selectedSubtitle)
     }
+
+    /// How many lines are under `subtitle`.
+    func count(_ subtitle: String) -> Int {
+        note.lines(under: subtitle).count
+    }
+
+    /// The subtitles column 2 lists: the commands, and "search".
+    var subtitles: [String] { commands + [Board.searchSubtitle] }
 
     // MARK: Hearing
 
@@ -132,60 +182,86 @@ final class BoardModel: ObservableObject {
             Main.delegate.togglePanel(byVoice: true)
             return
         }
-        if let option = Board.option(utterance) {
-            // An option word is never an entry: it answers what's pending, or what's open.
-            if pending != nil {
-                choose(option)
-                return
-            }
-            switch (option, opened) {
-            case (.copy, .record(let r)?): copyText(r.text)
-            case (.copy, .http(let c)?): copyText(c.response)
-            case (.no, _?): opened = nil
-            default: break
-            }
+        var said = utterance
+        if let rest = Board.afterWake(utterance) {
+            if !Main.delegate.panelShown { Main.delegate.togglePanel(byVoice: true) }
+            said = rest
+        }
+        // Only what's said to it: while the panel is open.
+        guard Main.delegate.panelShown else { return }
+        if let option = Board.option(said) {
+            // An option word is never added: it answers what was just added, or what's open.
+            choose(option)
             return
         }
-        entry = utterance.trimmingCharacters(in: .whitespacesAndNewlines)
+        take(said)
+    }
+
+    /// Said or typed: it goes in the note, under its subtitle; a search is then searched with.
+    func take(_ utterance: String) {
+        activity()
+        let heard = Board.parse(utterance, commands: commands)
+        guard !heard.text.isEmpty else {
+            say("Say something after “\(heard.subtitle)”")
+            return
+        }
+        var note = self.note
+        let spot = note.append(heard.text, under: heard.subtitle)
+        save(note)
+        added = Added(heard: heard, spot: spot, line: note[spot] ?? heard.text)
+        entry = ""
         opened = nil
-        play("Tink")
+        selectedSubtitle = nil
+        play("Pop")
+        if heard.isSearch {
+            let n = hits.count
+            say(n == 0 ? "Kept under search; nothing else matches" : "Kept under search; \(n) matching")
+        } else {
+            say("Added under \(heard.subtitle)")
+        }
     }
 
     func choose(_ option: Board.Option) {
         switch option {
-        case .add: add()
         case .open: openTop()
-        case .no: no()
         case .copy: copyTop()
+        case .no: no()
         }
     }
 
-    /// The pending entry joins the entries, on top.
-    func add() {
-        guard let p = pending, !p.text.isEmpty else { return }
-        Library.shared.add(LibraryRecord(kind: .note, text: p.text, tag: p.tag))
-        entry = ""
-        selectedTag = nil
-        play("Pop")
-        say("Added under #\(p.tag)")
-    }
-
+    /// The best match, or (nothing matching, or not a search) the note where it was just added.
     func openTop() {
-        guard let r = top else { return }
-        entry = ""
-        open(r)
+        guard let a = added else { return }
+        let focus = hits.first ?? Board.Hit(spot: a.spot, subtitle: a.heard.subtitle, line: a.line, sentence: a.line)
+        open(focus)
     }
 
+    /// Takes back what was just added; else closes what's open.
     func no() {
-        entry = ""
-        say(nil)
+        if let a = added {
+            var note = self.note
+            if note.remove(a.line, at: a.spot) {
+                save(note)
+                say("Taken back out")
+            }
+            added = nil
+        } else if opened != nil {
+            opened = nil
+        }
     }
 
-    /// The best match, or the pending entry itself when nothing matches.
+    /// The best match, or what was just added; else the sentence (or the answer) that's open.
     func copyTop() {
-        guard let p = pending else { return }
-        copyText(top?.text ?? p.text)
-        entry = ""
+        if let a = added {
+            copyText(hits.first?.sentence ?? a.line)
+            return
+        }
+        switch opened {
+        case .note(let focus?)?: copyText(focus.sentence)
+        case .note(nil)?: copyText(note.text)
+        case .http(let c)?: copyText(c.response)
+        case nil: break
+        }
     }
 
     func copyText(_ text: String) {
@@ -193,10 +269,12 @@ final class BoardModel: ObservableObject {
         say("Copied")
     }
 
-    /// A link opens in the browser; "GET …" or "POST …" is called; anything else is shown.
-    func open(_ record: LibraryRecord) {
+    /// A line that's a link opens in the browser; "GET …" or "POST …" is called; anything else
+    /// opens the note, scrolled to it.
+    func open(_ hit: Board.Hit?) {
         activity()
-        switch Board.action(for: record.text) {
+        added = nil
+        switch hit.map({ Board.action(for: $0.line) }) ?? .show {
         case .browse(let url):
             NSWorkspace.shared.open(url)
             opened = nil
@@ -204,13 +282,18 @@ final class BoardModel: ObservableObject {
         case .http(let method, let url, let body):
             call(HTTPCall(method: method, url: url, body: body))
         case .show:
-            opened = .record(record)
+            opened = .note(focus: hit)
         }
     }
 
-    func delete(_ record: LibraryRecord) {
-        Library.shared.delete(record.id)
-        if case .record(let r) = opened, r.id == record.id { opened = nil }
+    /// Takes a line out of the note.
+    func delete(_ hit: Board.Hit) {
+        var note = self.note
+        guard note.remove(hit.line, at: hit.spot) else { return }
+        save(note)
+        if added?.spot == hit.spot { added = nil }
+        // Lines after it have moved: what's open isn't where it was.
+        if case .note? = opened { opened = .note(focus: nil) }
     }
 
     private func call(_ start: HTTPCall) {
@@ -256,7 +339,8 @@ final class BoardModel: ObservableObject {
             say(word.isEmpty ? nil : "A command is one word")
             return
         }
-        guard w != Board.wakeWord, Board.option(w) == nil, !commands.contains(where: { Board.sameWord($0, w) }) else {
+        guard w != Board.wakeWord, Board.option(w) == nil, !Board.sameWord(w, Board.searchSubtitle),
+              !commands.contains(where: { Board.sameWord($0, w) }) else {
             say("“\(w)” can't be a command (it's taken)")
             return
         }
@@ -267,7 +351,7 @@ final class BoardModel: ObservableObject {
     func removeCommand(_ word: String) {
         commands.removeAll { $0 == word }
         defaults.set(commands, forKey: "boardCommands")
-        if selectedTag == word { selectedTag = nil }
+        if selectedSubtitle == word { selectedSubtitle = nil }
     }
 
     // MARK: Listening

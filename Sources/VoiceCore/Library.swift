@@ -27,7 +27,8 @@ public struct LibraryRecord: Codable, Equatable, Identifiable, Sendable {
     /// Timed lines (transcripts), for subtitles.
     public var segments: [TimedText]?
     public var starred: Bool
-    /// What it was filed under on the board ("note", or the voice command it was said after).
+    /// "board" on the board's note. (Entries from before the board kept one note had what they were
+    /// filed under; they're folded into the note once, and lose it.)
     public var tag: String?
 
     public init(kind: Kind, text: String, title: String? = nil, created: Date = Date(), duration: Double? = nil,
