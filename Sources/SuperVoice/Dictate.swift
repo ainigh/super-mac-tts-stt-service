@@ -1,0 +1,390 @@
+import AppKit
+import AVFoundation
+import SwiftUI
+import VoiceCore
+
+/// Listens to the microphone and writes down what's said. The audio is cut into phrases at the
+/// pauses (PhraseCutter) and each phrase is written down whole by Parakeet, in order; while a
+/// phrase is still being said, it's written down every so often to show it live. It keeps going
+/// until it's stopped; nothing said is thrown away (phrases wait while the model downloads, and
+/// stopping writes down the last one). A microphone change (AirPods connecting) carries on.
+/// On the main thread.
+final class Recorder: ObservableObject {
+    static let shared = Recorder()
+
+    @Published private(set) var on = false
+    /// Stopped, and the last words are still being written down.
+    @Published private(set) var finishing = false
+    /// What's been said so far.
+    @Published private(set) var text = ""
+    /// How loud it is, 0 to 1.
+    @Published private(set) var level: Float = 0
+    @Published private(set) var started: Date?
+    @Published var problem: String?
+
+    private let engine = AVAudioEngine()
+    private let lock = NSLock()
+    private var resampler: Resampler?            // used on the audio thread, under the lock
+    private var cutter = PhraseCutter(pause: 0.8)
+    private var rewiring: NSObjectProtocol?
+    /// Seconds of audio heard this time.
+    private(set) var heardSeconds = 0.0
+
+    private var done = ""
+    private var guess = ""
+    private var waiting: [[Float]] = []
+    private var writing = false
+    /// Counts clears, so what's written down for something cleared is dropped.
+    private var generation = 0
+    private var phraseNumber = 0
+    private var guessing = false
+    private var ticker: Timer?
+
+    func start() {
+        problem = nil
+        if on {
+            writeNext()                             // "Try again" after the model failed
+            return
+        }
+        Self.authorize { [weak self] problem in
+            guard let self else { return }
+            if let problem { self.problem = problem } else { self.begin() }
+        }
+    }
+
+    /// Stops listening. What was said last is still written down (`finishing` meanwhile).
+    func stop() {
+        guard on else { return }
+        closeMic()
+        if let last = cutter.flush() { enqueue(last) }
+        cutter.reset()
+        finishing = writing || !waiting.isEmpty
+    }
+
+    /// Forgets what's been written down (and anything waiting).
+    func clear() {
+        generation += 1
+        cutter.reset()
+        waiting = []
+        done = ""
+        guess = ""
+        text = ""
+        heardSeconds = 0
+    }
+
+    private func closeMic() {
+        ticker?.invalidate()
+        if let rewiring { NotificationCenter.default.removeObserver(rewiring) }
+        rewiring = nil
+        engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+        on = false
+        level = 0
+        started = nil
+    }
+
+    private func begin() {
+        _ = Neural.shared.earModel()                // start getting it, if it isn't here yet
+        if let problem = openMic() {
+            self.problem = problem
+            return
+        }
+        rewiring = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine,
+                                                          queue: .main) { [weak self] _ in self?.rewire() }
+        cutter = PhraseCutter(pause: 0.8)
+        on = true
+        started = Date()
+        finishing = false
+        ticker = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in self?.guessLive() }
+        writeNext()
+    }
+
+    /// Taps the microphone and starts the engine; nil, or what went wrong.
+    private func openMic() -> String? {
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else { return "No microphone found" }
+        lock.lock()
+        resampler = Resampler(from: format)
+        lock.unlock()
+        input.removeTap(onBus: 0)
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
+            self?.heard(buffer)
+        }
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            return "Couldn't start the microphone: \(error.localizedDescription)"
+        }
+        return nil
+    }
+
+    /// The microphone changed: the engine has stopped, so start it again on the new one.
+    private func rewire() {
+        guard on else { return }
+        engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+        if let problem = openMic() {
+            self.problem = problem
+            stop()
+        }
+    }
+
+    /// On the audio thread.
+    private func heard(_ buffer: AVAudioPCMBuffer) {
+        lock.lock()
+        let samples = resampler?.convert(buffer) ?? []
+        lock.unlock()
+        let l = Self.level(buffer)
+        DispatchQueue.main.async {
+            guard self.on else { return }
+            self.level = self.level * 0.5 + l * 0.5
+            self.heardSeconds += Double(samples.count) / Double(PCM.listenRate)
+            for phrase in self.cutter.add(samples) { self.enqueue(phrase.samples) }
+        }
+    }
+
+    private func enqueue(_ samples: [Float]) {
+        phraseNumber += 1
+        waiting.append(samples)
+        writeNext()
+    }
+
+    /// Writes down the oldest waiting phrase, then the next, one at a time so they stay in order.
+    private func writeNext() {
+        guard !writing, let samples = waiting.first else {
+            if !writing && waiting.isEmpty { finishing = false }
+            return
+        }
+        writing = true
+        let mine = generation
+        Task.detached { [weak self] in
+            var said = ""
+            var problem: String?
+            do {
+                said = try await Neural.shared.write(samples).text
+            } catch {
+                problem = error.localizedDescription
+            }
+            DispatchQueue.main.async { self?.written(said, problem: problem, generation: mine) }
+        }
+    }
+
+    private func written(_ said: String, problem: String?, generation mine: Int) {
+        writing = false
+        guard mine == generation else {
+            writeNext()
+            return
+        }
+        if let problem {
+            // The model isn't there (no network the first time?): the phrase waits for "Try again".
+            self.problem = "Couldn't write it down: \(problem)"
+            finishing = false
+            return
+        }
+        if !waiting.isEmpty { waiting.removeFirst() }
+        done = Self.join(done, said.trimmingCharacters(in: .whitespacesAndNewlines))
+        if waiting.isEmpty { guess = "" }
+        text = Self.join(done, guess)
+        writeNext()
+    }
+
+    /// While a phrase is being said, writes down what's been said of it so far, to show it live.
+    private func guessLive() {
+        guard on, !guessing, !writing, waiting.isEmpty, cutter.spoke,
+              cutter.open.count > PhraseCutter.rate / 2, Neural.shared.ears.isReady else { return }
+        guessing = true
+        let mine = (generation, phraseNumber)
+        let audio = cutter.open
+        Task.detached { [weak self] in
+            let said = (try? await Neural.shared.write(audio).text) ?? ""
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.guessing = false
+                guard mine == (self.generation, self.phraseNumber), self.on, self.waiting.isEmpty else { return }
+                self.guess = said.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.text = Self.join(self.done, self.guess)
+            }
+        }
+    }
+
+    static func join(_ a: String, _ b: String) -> String {
+        if a.isEmpty { return b }
+        if b.isEmpty { return a }
+        return a + " " + b
+    }
+
+    /// Loudness of a buffer, 0 (quiet) to 1 (loud), on a decibel scale.
+    static func level(_ buffer: AVAudioPCMBuffer) -> Float {
+        guard let data = buffer.floatChannelData?[0] else { return 0 }
+        let n = Int(buffer.frameLength)
+        guard n > 0 else { return 0 }
+        var sum: Float = 0
+        for i in 0..<n { sum += data[i] * data[i] }
+        let db = 20 * log10(max(sqrt(sum / Float(n)), 1e-6))
+        return max(0, min(1, (db + 55) / 45))
+    }
+
+    /// Asks for the microphone; the answer is nil, or what to switch on.
+    static func authorize(_ done: @escaping (String?) -> Void) {
+        AVCaptureDevice.requestAccess(for: .audio) { granted in
+            DispatchQueue.main.async {
+                done(granted ? nil : "The microphone is off for Super Voice: turn it on in System Settings → Privacy & Security → Microphone")
+            }
+        }
+    }
+}
+
+/// Record, talk as long as you like, stop; edit it, keep it in the library, or copy it.
+struct DictateView: View {
+    @EnvironmentObject var service: Service
+    @EnvironmentObject var library: Library
+    @ObservedObject var recorder = Recorder.shared
+    /// What's in the box: what was dictated, and any edits. Kept if the window closes.
+    @AppStorage("dictationDraft") private var draft = ""
+    @State private var note: String?
+
+    var body: some View {
+        Page(title: "Dictate", subtitle: "Talk for as long as you like; pauses don't stop it",
+             symbol: "mic.fill", colors: [Palette.pink, Palette.orange]) {
+            if let status = Neural.status(service.neural.ears, what: "speech recognition") {
+                Notice(text: status, tint: .blue, symbol: "arrow.down.circle")
+            }
+            if let problem = recorder.problem {
+                HStack {
+                    Notice(text: problem)
+                    if problem.contains("System Settings") {
+                        Button("Open Settings") {
+                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                        }
+                    } else if problem.contains("write it down") {
+                        Button("Try again") { recorder.start() }
+                    }
+                }
+            }
+            recordBar
+            TextEditor(text: Binding(get: { recorder.on || recorder.finishing ? recorder.text : draft },
+                                     set: { if !(recorder.on || recorder.finishing) { draft = $0 } }))
+                .font(.system(size: 15))
+                .scrollContentBackground(.hidden)
+                .padding(10)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(alignment: .topLeading) {
+                    if draft.isEmpty && recorder.text.isEmpty {
+                        Text(recorder.on ? "Listening…" : "Press Record and start talking.")
+                            .foregroundStyle(.tertiary).padding(16).allowsHitTesting(false)
+                    }
+                }
+            HStack(spacing: 8) {
+                Button("Keep in library") { keep() }
+                    .buttonStyle(PillButton(tint: Palette.pink, filled: true))
+                    .keyboardShortcut("s", modifiers: .command)
+                    .disabled(busy || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Copy") {
+                    service.copy(draft)
+                    flash("Copied")
+                }
+                .buttonStyle(PillButton(tint: .secondary, filled: false))
+                .disabled(busy || draft.isEmpty)
+                Button("Read back") { service.reader.say(draft, voice: service.voice, speed: service.settings.speed) }
+                    .buttonStyle(PillButton(tint: .secondary, filled: false))
+                    .disabled(busy || draft.isEmpty)
+                Button("Clear") {
+                    draft = ""
+                    recorder.clear()
+                }
+                .buttonStyle(PillButton(tint: .secondary, filled: false))
+                .disabled(busy || draft.isEmpty)
+                Spacer()
+                if let note { Text(note).font(.system(size: 11)).foregroundStyle(.secondary) }
+                Text("\(draft.split(whereSeparator: \.isWhitespace).count) words").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+        .onChange(of: recorder.finishing) { _, finishing in
+            if !finishing && !recorder.on { take() }
+        }
+        .onChange(of: recorder.on) { _, on in
+            if !on && !recorder.finishing { take() }
+        }
+    }
+
+    private var busy: Bool { recorder.on || recorder.finishing }
+
+    private var recordBar: some View {
+        HStack(spacing: 12) {
+            Button {
+                recorder.on ? recorder.stop() : startRecording()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: recorder.on ? "stop.fill" : "record.circle")
+                    Text(recorder.on ? "Stop" : "Record")
+                }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 9)
+                .background(Capsule().fill(recorder.on ? Palette.red : Palette.pink))
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(recorder.finishing)
+            if recorder.on {
+                LevelMeter(level: recorder.level)
+                if let started = recorder.started {
+                    TimelineView(.periodic(from: started, by: 1)) { context in
+                        Text(Captions.clock(context.date.timeIntervalSince(started)))
+                            .font(.system(size: 13, design: .monospaced)).foregroundStyle(.secondary)
+                    }
+                }
+            } else if recorder.finishing {
+                ProgressView().controlSize(.small)
+                Text("Writing down the last words…").font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+    }
+
+    /// Recording adds to what's in the box.
+    private func startRecording() {
+        recorder.clear()
+        recorder.start()
+    }
+
+    /// What was dictated joins the draft.
+    private func take() {
+        let said = recorder.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !said.isEmpty else { return }
+        draft = Recorder.join(draft.trimmingCharacters(in: .whitespacesAndNewlines), said)
+        recorder.clear()
+    }
+
+    private func keep() {
+        let item = LibraryRecord(kind: .dictation, text: draft.trimmingCharacters(in: .whitespacesAndNewlines))
+        library.add(item)
+        draft = ""
+        flash("Kept in the library")
+    }
+
+    private func flash(_ s: String) {
+        note = s
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { if note == s { note = nil } }
+    }
+}
+
+/// A row of bars that rise with the microphone's level.
+struct LevelMeter: View {
+    var level: Float
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(0..<12, id: \.self) { i in
+                Capsule()
+                    .fill(Float(i) / 12 < level ? Palette.pink : Color.primary.opacity(0.12))
+                    .frame(width: 3, height: 6 + CGFloat(i % 4) * 3)
+            }
+        }
+        .animation(.linear(duration: 0.08), value: level)
+    }
+}
