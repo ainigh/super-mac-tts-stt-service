@@ -1,0 +1,384 @@
+openapi: 3.1.0
+info:
+  title: Super Voice
+  version: 0.1.0
+  description: >
+    Local text-to-speech (Kokoro-82M, six voices) and speech-to-text (Parakeet TDT v3) on this Mac.
+    See API.md for the full description.
+servers:
+  - url: http://127.0.0.1:8767
+tags:
+  - name: native
+  - name: openai
+paths:
+  /api/health:
+    get:
+      tags: [native]
+      summary: Whether it's up, which endpoints are on, how the models are doing
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+  /api/voices:
+    get:
+      tags: [native]
+      summary: The voices, and the default voice and speed
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Voices"}
+  /api/tts:
+    post:
+      tags: [native]
+      summary: Text to speech
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TtsRequest"}
+          text/plain:
+            schema: {type: string}
+      responses:
+        "200":
+          description: The speech, 24 kHz mono 16-bit
+          headers:
+            X-Voice: {schema: {type: string}, description: The voice id used}
+            X-Sample-Rate: {schema: {type: integer, const: 24000}}
+          content:
+            audio/wav: {schema: {type: string, format: binary}}
+            audio/pcm: {schema: {type: string, format: binary}}
+        "400": {$ref: "#/components/responses/Error"}
+        "413": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  /api/stt:
+    post:
+      tags: [native]
+      summary: Speech to text, answered when it's all done
+      parameters:
+        - {$ref: "#/components/parameters/Format"}
+        - {$ref: "#/components/parameters/Rate"}
+        - {$ref: "#/components/parameters/Channels"}
+        - {$ref: "#/components/parameters/Lang"}
+      requestBody: {$ref: "#/components/requestBodies/Audio"}
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [text]
+                properties:
+                  text: {type: string}
+                  duration: {type: number, description: Seconds of audio}
+                  time: {type: number, description: Seconds it took}
+        "400": {$ref: "#/components/responses/Error"}
+        "415": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  /api/transcribe:
+    post:
+      tags: [native]
+      summary: An audio file to timestamped segments, streamed (NDJSON) or all at once
+      parameters:
+        - name: format
+          in: query
+          description: Leave out for the NDJSON stream; or json, txt, srt, vtt for one response.
+          schema: {type: string, enum: [json, txt, srt, vtt]}
+        - {$ref: "#/components/parameters/Rate"}
+        - {$ref: "#/components/parameters/Channels"}
+        - {$ref: "#/components/parameters/Lang"}
+      requestBody: {$ref: "#/components/requestBodies/Audio"}
+      responses:
+        "200":
+          description: >
+            Without format: one TranscribeEvent per line (info, progress, segment, done or error).
+          content:
+            application/x-ndjson:
+              schema: {$ref: "#/components/schemas/TranscribeEvent"}
+            application/json:
+              schema: {$ref: "#/components/schemas/Transcript"}
+            text/plain: {schema: {type: string}}
+            application/x-subrip: {schema: {type: string}}
+            text/vtt: {schema: {type: string}}
+        "400": {$ref: "#/components/responses/Error"}
+        "415": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  /api/say:
+    post:
+      tags: [native]
+      summary: Speak on this Mac's speakers (queued)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: {type: string}
+                voice: {type: string}
+                speed: {type: number, minimum: 0.5, maximum: 2.0}
+          text/plain:
+            schema: {type: string}
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+                  id: {type: string}
+                  queued: {type: integer}
+        "400": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  /api/say/stop:
+    post:
+      tags: [native]
+      summary: Stop speaking and empty the queue
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+                  stopped: {type: integer}
+  /v1/models:
+    get:
+      tags: [openai]
+      summary: OpenAI-compatible model list
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: {type: string, const: list}
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string, enum: [kokoro, parakeet]}
+                        object: {type: string, const: model}
+                        owned_by: {type: string}
+  /v1/audio/speech:
+    post:
+      tags: [openai]
+      summary: OpenAI-compatible text to speech
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [input]
+              properties:
+                model: {type: string, description: Anything; it's always Kokoro}
+                input: {type: string, maxLength: 20000}
+                voice: {type: string, description: Unknown names get the default voice}
+                speed: {type: number, minimum: 0.5, maximum: 2.0}
+                response_format:
+                  type: string
+                  description: wav or pcm; anything else is answered with WAV
+                instructions: {type: string, description: Ignored}
+      responses:
+        "200":
+          description: The speech
+          content:
+            audio/wav: {schema: {type: string, format: binary}}
+            audio/pcm: {schema: {type: string, format: binary}}
+        "400": {$ref: "#/components/responses/OpenAIError"}
+        "503": {$ref: "#/components/responses/OpenAIError"}
+  /v1/audio/transcriptions:
+    post:
+      tags: [openai]
+      summary: OpenAI-compatible speech to text
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+                model: {type: string, description: Anything; it's always Parakeet}
+                language: {type: string, description: Ignored}
+                prompt: {type: string, description: Ignored}
+                response_format:
+                  type: string
+                  enum: [json, text, srt, vtt, verbose_json]
+                  default: json
+      responses:
+        "200":
+          description: The transcript, in the format asked for
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [text]
+                properties:
+                  text: {type: string}
+                  duration: {type: number, description: verbose_json only}
+                  segments:
+                    type: array
+                    description: verbose_json only
+                    items: {$ref: "#/components/schemas/Segment"}
+            text/plain: {schema: {type: string}}
+        "400": {$ref: "#/components/responses/OpenAIError"}
+        "415": {$ref: "#/components/responses/OpenAIError"}
+        "503": {$ref: "#/components/responses/OpenAIError"}
+components:
+  parameters:
+    Format:
+      name: format
+      in: query
+      description: pcm for a raw 16-bit little-endian body; leave out for any audio file
+      schema: {type: string, enum: [pcm]}
+    Rate:
+      name: rate
+      in: query
+      description: Sample rate of a raw pcm body
+      schema: {type: integer, default: 16000}
+    Channels:
+      name: channels
+      in: query
+      description: Channels of a raw pcm body
+      schema: {type: integer, default: 1}
+    Lang:
+      name: lang
+      in: query
+      description: Ignored (the language is detected); accepted for glassvoice compatibility
+      schema: {type: string}
+  requestBodies:
+    Audio:
+      required: true
+      description: WAV, AIFF, CAF, MP3, M4A/AAC, FLAC, MP4/MOV sound, or raw PCM with format=pcm
+      content:
+        application/octet-stream: {schema: {type: string, format: binary}}
+        audio/*: {schema: {type: string, format: binary}}
+        video/*: {schema: {type: string, format: binary}}
+        multipart/form-data:
+          schema:
+            type: object
+            required: [file]
+            properties:
+              file: {type: string, format: binary}
+  responses:
+    Error:
+      description: Something's wrong
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    OpenAIError:
+      description: Something's wrong (OpenAI's shape)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                properties:
+                  message: {type: string}
+                  type: {type: string}
+                  code: {type: string}
+  schemas:
+    Error:
+      type: object
+      required: [error, code]
+      properties:
+        error: {type: string}
+        code:
+          type: string
+          enum: [missing_text, bad_speed, unknown_voice, bad_request, unauthorized, not_found,
+                 too_large, unsupported_audio, endpoint_off, model_loading, failed]
+        progress: {type: number, description: model_loading only, 0 to 1}
+    ModelState:
+      type: object
+      required: [name, state]
+      properties:
+        name: {type: string}
+        state: {type: string, enum: [not_loaded, downloading, loading, ready, failed]}
+        progress: {type: number}
+        message: {type: string}
+    Health:
+      type: object
+      required: [ok, tts, stt, transcribe, say, openai, models]
+      properties:
+        ok: {type: boolean}
+        service: {type: string, const: supervoice}
+        version: {type: string}
+        tts: {type: boolean}
+        stt: {type: boolean}
+        transcribe: {type: boolean}
+        say: {type: boolean}
+        openai: {type: boolean}
+        models:
+          type: object
+          properties:
+            tts: {$ref: "#/components/schemas/ModelState"}
+            stt: {$ref: "#/components/schemas/ModelState"}
+    Voice:
+      type: object
+      properties:
+        id: {type: string, examples: [af_heart]}
+        name: {type: string, examples: [Heart]}
+        gender: {type: string, enum: [female, male]}
+        accent: {type: string, enum: [us, uk]}
+        alias: {type: string, examples: [f1]}
+    Voices:
+      type: object
+      properties:
+        default: {type: string}
+        speed: {type: number}
+        voices:
+          type: array
+          items: {$ref: "#/components/schemas/Voice"}
+    TtsRequest:
+      type: object
+      required: [text]
+      properties:
+        text: {type: string, maxLength: 20000}
+        voice: {type: string, description: "id, name, f1-f3 / m1-m3, female / male"}
+        speed: {type: number, minimum: 0.5, maximum: 2.0}
+        format: {type: string, enum: [wav, pcm], default: wav}
+        stream: {type: boolean, default: false}
+    Segment:
+      type: object
+      required: [start, end, text]
+      properties:
+        start: {type: number}
+        end: {type: number}
+        text: {type: string}
+    Transcript:
+      type: object
+      properties:
+        text: {type: string}
+        duration: {type: number}
+        segments:
+          type: array
+          items: {$ref: "#/components/schemas/Segment"}
+    TranscribeEvent:
+      type: object
+      required: [type]
+      properties:
+        type: {type: string, enum: [info, progress, segment, done, error]}
+        duration: {type: number, description: info}
+        done: {type: number, description: progress, seconds written down}
+        total: {type: number, description: progress, seconds in all}
+        start: {type: number, description: segment}
+        end: {type: number, description: segment}
+        text: {type: string, description: segment, done}
+        message: {type: string, description: error}
