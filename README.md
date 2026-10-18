@@ -52,7 +52,8 @@ install line again works too.
 
 Click the waveform in the menu bar:
 
-- **Start / Stop**: serving the API (the tools keep working either way).
+- **Listen**: always listen (see below). **Start / Stop**: serving the API (the tools keep working
+  either way).
 - **Read aloud, Dictate, Transcribe, Library**: the tools, each in its own window.
 - **Voice**: the default voice (click one to hear it) and speed, for the tools and for API calls
   that don't name one. Beside it, whether each model is ready.
@@ -61,6 +62,30 @@ Click the waveform in the menu bar:
   (the service's own page, with a box to try each).
 - **Allow other devices**: listen on the network too; callers from elsewhere need the token shown.
 - **Update**, **Open at login**, **Quit**.
+
+## Always listen and the board
+
+**Listen** (the ear, next to Start) keeps the microphone open: each thing you say, ended by a
+pause, lands on the board beside the panel. The panel grows to four columns while it's in use (the
+rectangles button shows the board without listening, to type into it):
+
+1. **The panel** as before.
+2. **Voice commands**: words you add over time (`notes` to start with). Say one first and what
+   follows is filed under it: "notes, buy milk" goes under `#notes`. Anything else goes under
+   `#note`. Click a command to see what's filed under it.
+3. **Entries**: what you just said (or typed: the box takes typing too, and you can edit what was
+   heard) sits on top, not added yet; under it, the entries searched with it, best match first.
+4. **Options** for it: **Add** (it becomes the newest entry, on top), **Open** (the best match:
+   a link opens in your browser; `GET https://…` or `POST https://… {json}` is called and its answer
+   shown; anything else opens here, with **Copy**), **No** (drop it), **Copy** (the best match, or
+   what you said when nothing matches). Click one, press Return (Add) or Escape (No), or just say
+   it: "add", "open", "no", "copy".
+
+Say **"mouse"** to open the panel (it doesn't take the keyboard from the app you're in) and
+"mouse" again to close it. The panel closes after 20 seconds with nothing happening. While
+something is waiting for an answer and the panel is closed, a dot shows next to the icon (an ear
+while listening). What the Mac says itself, and anything said while dictating, is ignored. Board
+entries are kept in the library too (as notes, with their tag).
 
 ## Working on it
 
