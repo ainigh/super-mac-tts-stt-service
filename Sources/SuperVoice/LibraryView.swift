@@ -289,6 +289,7 @@ private struct Detail: View {
         guard library.item(item.id) != item else { return }
         if item.title.trimmingCharacters(in: .whitespaces).isEmpty { item.title = LibraryRecord.title(for: item.text) }
         library.save(item)
+        if let fresh = library.item(item.id) { item = fresh }      // its new modified date
     }
 
     private func flash(_ s: String) {

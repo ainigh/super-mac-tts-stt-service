@@ -219,9 +219,16 @@ final class FileAudioReader: AudioReader {
     var duration: Double { Double(file.length) / file.processingFormat.sampleRate }
 
     func read(maxFrames: Int) throws -> [Float] {
-        while pending.count < maxFrames {
+        // Compressed files (mp3, aac) report a length a little past their real end, and reading
+        // there throws: stop at the length, and take a failed read after the start as the end.
+        while pending.count < maxFrames, file.framePosition < file.length {
             guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: chunk) else { break }
-            try file.read(into: buffer, frameCount: chunk)
+            do {
+                try file.read(into: buffer, frameCount: min(chunk, AVAudioFrameCount(file.length - file.framePosition)))
+            } catch {
+                if file.framePosition > 0 { break }
+                throw AudioError.unreadable(error.localizedDescription)
+            }
             if buffer.frameLength == 0 { break }
             pending += resampler.convert(buffer)
         }

@@ -168,7 +168,8 @@ final class Recorder: ObservableObject {
             } catch {
                 problem = error.localizedDescription
             }
-            DispatchQueue.main.async { self?.written(said, problem: problem, generation: mine) }
+            let heard = said, failure = problem
+            DispatchQueue.main.async { self?.written(heard, problem: failure, generation: mine) }
         }
     }
 
