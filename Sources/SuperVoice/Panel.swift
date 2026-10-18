@@ -370,7 +370,8 @@ struct PanelRoot: View {
     @ObservedObject var board = BoardModel.shared
     var close: () -> Void
     var resized: (CGSize) -> Void
-    @State private var height: CGFloat = 640
+    /// The first column's height, which the others take (nil until it's measured).
+    @State private var height: CGFloat?
 
     static let boardWidth: CGFloat = 380
 
@@ -393,7 +394,7 @@ struct PanelRoot: View {
         }
         .fixedSize()
         .onContinuousHover { _ in Main.delegate.noteActivity() }      // looking around counts as activity
-        .onPreferenceChange(FirstColumnHeight.self) { height = $0 }
+        .onPreferenceChange(FirstColumnHeight.self) { height = $0 > 0 ? $0 : nil }
         .background(GeometryReader { g in
             Color.clear
                 .onAppear { resized(g.size) }
@@ -403,6 +404,6 @@ struct PanelRoot: View {
 }
 
 private struct FirstColumnHeight: PreferenceKey {
-    static var defaultValue: CGFloat = 640
+    static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
