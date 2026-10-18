@@ -33,8 +33,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         item.button?.imagePosition = .imageLeading
         panel = MenuPanel(content: PanelRoot(close: { [weak self] in self?.hide() },
-                                             resized: { [weak self] size in self?.panel?.fit(size) }))
+                                             resized: { [weak self] size in
+                                                 DispatchQueue.main.async { self?.panel?.fit(size) }     // not mid-update
+                                             }))
         panel.onCancel = { [weak self] in self?.hide() }
+        panel.onMouseMoved = { [weak self] in self?.noteActivity() }
         Service.shared.launch()
         BoardModel.shared.launch()
         Updater.shared.start()
@@ -94,7 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         noteActivity()
         idleTimer?.invalidate()
-        idleTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.checkIdle() }
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkIdle() }
+        }
         refreshIcon()
     }
 
@@ -147,8 +152,12 @@ final class MenuPanel: NSPanel {
         hasShadow = true
         hidesOnDeactivate = false
         acceptsMouseMovedEvents = true
+        // The panel sizes itself (fit) as columns come and go, top staying put; the hosting view
+        // only says how big it wants to be.
+        hosting.sizingOptions = [.intrinsicContentSize]
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
-        let glass = NSVisualEffectView()
+        let glass = Glass()
+        glass.onMouseMoved = { [weak self] in self?.onMouseMoved?() }
         glass.material = .popover
         glass.blendingMode = .behindWindow
         glass.state = .active
@@ -167,6 +176,9 @@ final class MenuPanel: NSPanel {
     }
 
     override var canBecomeKey: Bool { true }
+
+    /// The mouse moved over it (even when it isn't the key window: opened by voice).
+    var onMouseMoved: (() -> Void)?
 
     /// Escape (when nothing in it takes it).
     var onCancel: (() -> Void)?
@@ -195,5 +207,28 @@ final class MenuPanel: NSPanel {
 
     override func cancelOperation(_ sender: Any?) {
         onCancel?()
+    }
+}
+
+/// The panel's glass, which also hears the mouse moving over it whether or not the panel has the
+/// keyboard.
+private final class Glass: NSVisualEffectView {
+    var onMouseMoved: (() -> Void)?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.activeAlways, .mouseMoved, .inVisibleRect, .mouseEnteredAndExited],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        onMouseMoved?()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        onMouseMoved?()
     }
 }

@@ -50,8 +50,12 @@ final class Recorder: ObservableObject {
     private var phraseNumber = 0
     private var guessing = false
     private var ticker: Timer?
+    /// Asked to listen (start) and not since stopped: the microphone opens only if still wanted
+    /// once permission comes back.
+    private var wanted = false
 
     func start() {
+        wanted = true
         problem = nil
         if on {
             writeNext()                             // "Try again" after the model failed
@@ -65,6 +69,7 @@ final class Recorder: ObservableObject {
 
     /// Stops listening. What was said last is still written down (`finishing` meanwhile).
     func stop() {
+        wanted = false
         guard on else { return }
         closeMic()
         if let last = cutter.flush() { enqueue(last, send: pauseToEnd != nil) }
@@ -95,6 +100,7 @@ final class Recorder: ObservableObject {
     }
 
     private func begin() {
+        guard wanted, !on else { return }
         _ = Neural.shared.earModel()                // start getting it, if it isn't here yet
         if let problem = openMic() {
             self.problem = problem
@@ -162,6 +168,8 @@ final class Recorder: ObservableObject {
     private func enqueue(_ samples: [Float], send: Bool = false) {
         phraseNumber += 1
         waiting.append((samples, send))
+        // Always listening with nothing writing it down (the model failed): don't pile up forever.
+        if pauseToEnd != nil, waiting.count > 30 { waiting.removeFirst(waiting.count - 30) }
         writeNext()
     }
 

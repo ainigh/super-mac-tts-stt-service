@@ -60,11 +60,24 @@ final class BoardModel: ObservableObject {
         sounds = saved.object(forKey: "boardSounds") as? Bool ?? true
         listener.onUtterance = { [weak self] said in self?.heard(said) }
         listener.$text.receive(on: DispatchQueue.main).sink { [weak self] t in self?.hearing = t }.store(in: &watching)
-        // Dictating takes the microphone: always listen waits, then carries on.
-        Recorder.shared.$on.receive(on: DispatchQueue.main).sink { [weak self] dictating in
-            guard let self, self.listening else { return }
-            if dictating { self.listener.stop() } else { self.listener.start() }
-        }.store(in: &watching)
+        // Dictating takes the microphone, and what the Mac says itself isn't to be heard: always
+        // listen waits meanwhile (dropping what it half heard), then carries on.
+        let service = Service.shared
+        Recorder.shared.$on.removeDuplicates()
+            .combineLatest(service.reader.$speaking.removeDuplicates(), service.speaker.$speaking.removeDuplicates())
+            .map { $0 || $1 || $2 }
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] busy in
+                guard let self, self.listening else { return }
+                if busy {
+                    self.listener.stop()
+                    self.listener.clear()
+                } else {
+                    self.resume()
+                }
+            }.store(in: &watching)
         Library.shared.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &watching)
         listener.$problem.receive(on: DispatchQueue.main).sink { [weak self] p in
             if let p { self?.say(p) }
@@ -73,7 +86,14 @@ final class BoardModel: ObservableObject {
 
     /// At launch: listen if it was listening.
     func launch() {
-        if listening { listener.start() }
+        if listening { resume() }
+    }
+
+    /// Listens, unless dictation or the Mac's own voice has the floor.
+    private func resume() {
+        let service = Service.shared
+        guard listening, !Recorder.shared.on, !service.reader.speaking, !service.speaker.speaking else { return }
+        listener.start()
     }
 
     /// Columns 2 and 3 show.
@@ -113,15 +133,18 @@ final class BoardModel: ObservableObject {
             return
         }
         if let option = Board.option(utterance) {
+            // An option word is never an entry: it answers what's pending, or what's open.
             if pending != nil {
                 choose(option)
                 return
             }
-            if case .record(let r) = opened {
-                if option == .copy { copyText(r.text) }
-                if option == .no { opened = nil }
-                if option == .copy || option == .no { return }
+            switch (option, opened) {
+            case (.copy, .record(let r)?): copyText(r.text)
+            case (.copy, .http(let c)?): copyText(c.response)
+            case (.no, _?): opened = nil
+            default: break
             }
+            return
         }
         entry = utterance.trimmingCharacters(in: .whitespacesAndNewlines)
         opened = nil
@@ -205,9 +228,10 @@ final class BoardModel: ObservableObject {
             done.status = (response as? HTTPURLResponse)?.statusCode
             if let error { done.error = error.localizedDescription }
             if let data { done.response = Self.readable(data) }
+            let result = done
             DispatchQueue.main.async {
                 guard let self, case .http(let now) = self.opened, now.request == start.request else { return }
-                self.opened = .http(done)
+                self.opened = .http(result)
                 self.activity()
             }
         }.resume()
@@ -227,10 +251,13 @@ final class BoardModel: ObservableObject {
     // MARK: Commands
 
     func addCommand(_ word: String) {
-        let w = Board.words(word).joined()
-        guard !w.isEmpty, w != Board.wakeWord, Board.Option(rawValue: w) == nil,
-              !commands.contains(where: { Board.sameWord($0, w) }) else {
-            say(word.isEmpty ? nil : "“\(word)” can't be a command (it's taken)")
+        let ws = Board.words(word)
+        guard ws.count == 1, let w = ws.first else {
+            say(word.isEmpty ? nil : "A command is one word")
+            return
+        }
+        guard w != Board.wakeWord, Board.option(w) == nil, !commands.contains(where: { Board.sameWord($0, w) }) else {
+            say("“\(w)” can't be a command (it's taken)")
             return
         }
         commands.append(w)
@@ -249,7 +276,7 @@ final class BoardModel: ObservableObject {
         listening = on
         defaults.set(on, forKey: "alwaysListen")
         if on {
-            listener.start()
+            resume()
         } else {
             listener.stop()
             listener.clear()
