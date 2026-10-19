@@ -9,6 +9,12 @@ on:
 permissions:
   contents: write
 
+# A newer push to the same branch supersedes a run that hasn't finished; main's runs all finish,
+# since each one is a release.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   # The service's logic, on Linux (cheap and quick).
   test:
@@ -25,6 +31,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: swift --version
+      # FluidAudio and its dependencies take minutes to build; keep them between runs.
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.swift') }}
+          restore-keys: swiftpm-${{ runner.os }}-
       - name: Test
         run: swift test
       - name: Build the app
