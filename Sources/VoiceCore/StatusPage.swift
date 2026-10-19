@@ -45,6 +45,7 @@ enum StatusPage {
     <div class="row">
       <select id="voice"></select>
       <button id="speak">Speak</button>
+      <button id="say" title="POST /api/say: through this Mac's speakers">Say it on this Mac</button>
       <audio id="player" controls hidden></audio>
     </div>
     <pre id="ttsout" hidden></pre>
@@ -67,7 +68,8 @@ async function status() {
       `<span class="pill">${k} <b class="${h[k] ? "on" : "off"}">${h[k] ? "on" : "off"}</b></span>`);
     const ms = Object.entries(h.models).map(([k, m]) =>
       `<span class="pill">${m.name} <b>${m.state.replace("_", " ")}${m.progress != null ? " " + Math.round(m.progress * 100) + "%" : ""}</b></span>`);
-    $("status").innerHTML = eps.concat(ms).join("") + `<span class="pill">v${h.version}</span>`;
+    const up = h.uptime >= 3600 ? Math.floor(h.uptime / 3600) + " h" : h.uptime >= 60 ? Math.floor(h.uptime / 60) + " min" : h.uptime + " s";
+    $("status").innerHTML = eps.concat(ms).join("") + `<span class="pill">v${h.version}</span><span class="pill">up ${up}</span>`;
   } catch (e) { $("status").textContent = "Not answering."; }
 }
 async function voices() {
@@ -84,6 +86,15 @@ $("speak").onclick = async () => {
     $("player").src = URL.createObjectURL(await r.blob()); $("player").hidden = false; $("player").play();
   } catch (e) { $("ttsout").textContent = e.message; $("ttsout").hidden = false; }
   $("speak").disabled = false;
+};
+$("say").onclick = async () => {
+  $("say").disabled = true; $("ttsout").hidden = true;
+  try {
+    const r = await fetch("/api/say", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: $("text").value, voice: $("voice").value }) });
+    if (!r.ok) throw new Error((await r.json()).error);
+  } catch (e) { $("ttsout").textContent = e.message; $("ttsout").hidden = false; }
+  $("say").disabled = false;
 };
 $("file").onchange = () => { $("listen").disabled = !$("file").files.length; };
 $("listen").onclick = async () => {
