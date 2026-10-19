@@ -22,6 +22,8 @@ final class APITests: XCTestCase {
         XCTAssertEqual(h["tts"] as? Bool, true)
         XCTAssertEqual(h["say"] as? Bool, false)
         XCTAssertEqual(h["version"] as? String, "0.1.0")
+        XCTAssertEqual(h["port"] as? Int, 8767)
+        XCTAssertNotNil(h["uptime"] as? Int)
         let models = h["models"] as? [String: [String: Any]]
         XCTAssertEqual(models?["tts"]?["state"] as? String, "ready")
         XCTAssertEqual(models?["stt"]?["state"] as? String, "downloading")

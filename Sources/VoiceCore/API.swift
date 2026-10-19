@@ -6,6 +6,7 @@ public final class VoiceAPI {
     public let version: String
     private let settings: () -> ServiceSettings
     private let directory: URL
+    private let started = Date()
 
     public static let maxText = 20_000
 
@@ -101,7 +102,8 @@ public final class VoiceAPI {
 
     private func health(_ s: ServiceSettings) -> [String: Any] {
         var out: [String: Any] = [
-            "ok": true, "service": "supervoice", "version": version,
+            "ok": true, "service": "supervoice", "version": version, "port": s.port,
+            "uptime": Int(Date().timeIntervalSince(started)),
             "models": ["tts": model("kokoro-82m", engine.ttsState), "stt": model("parakeet-tdt-0.6b-v3", engine.sttState)],
         ]
         for e in Endpoint.allCases { out[e.rawValue] = s.isOn(e) }

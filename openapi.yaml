@@ -320,6 +320,8 @@ components:
         ok: {type: boolean}
         service: {type: string, const: supervoice}
         version: {type: string}
+        port: {type: integer, examples: [8767]}
+        uptime: {type: integer, description: Seconds the server has been up}
         tts: {type: boolean}
         stt: {type: boolean}
         transcribe: {type: boolean}

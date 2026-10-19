@@ -72,6 +72,8 @@ stopped, connections are refused. `GET /api/health` always says what's on.
   "ok": true,
   "service": "supervoice",
   "version": "0.1.0",
+  "port": 8767,
+  "uptime": 3641,
   "tts": true, "stt": true, "transcribe": true, "say": true, "openai": true,
   "models": {
     "tts": {"name": "kokoro-82m",          "state": "ready"},
@@ -82,6 +84,7 @@ stopped, connections are refused. `GET /api/health` always says what's on.
 
 - The top-level booleans say which endpoint groups are on. (They're the same keys glassvoice's
   health uses, so clients that check `health.tts` work against either.)
+- `port` is the port it's listening on and `uptime` how many seconds it has been serving.
 - `models.*.state` is one of `not_loaded` (loads on first use), `downloading` (with `progress`, 0
   to 1), `loading`, `ready`, `failed` (with `message`).
 
