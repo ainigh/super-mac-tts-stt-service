@@ -163,6 +163,8 @@ struct PanelView: View {
                         .toggleStyle(.switch)
                         .controlSize(.mini)
                         .labelsHidden()
+                        .help(service.settings.isOn(e) ? "\(e.routes) is on; switch it off and callers get 503 endpoint_off"
+                                                       : "\(e.routes) is off: callers get 503 endpoint_off")
                 }
                 .opacity(service.wantsServing ? 1 : 0.5)
             }
