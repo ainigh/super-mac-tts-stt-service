@@ -132,6 +132,8 @@ final class AudioTests: XCTestCase {
         XCTAssertEqual(PCM.sniffExtension(Data([0, 0, 0, 0x20]) + Data("ftypM4A ".utf8)), "m4a")
         XCTAssertEqual(PCM.sniffExtension(Data([0, 0, 0, 0x20]) + Data("ftypisom".utf8)), "mp4")
         XCTAssertEqual(PCM.sniffExtension(Data("fLaC".utf8)), "flac")
+        XCTAssertEqual(PCM.sniffExtension(Data("#!AMR\n".utf8)), "amr")
+        XCTAssertEqual(PCM.sniffExtension(Data([0, 0, 0, 0x18]) + Data("ftyp3gp4".utf8)), "3gp")
         XCTAssertEqual(PCM.sniffExtension(Data("hello".utf8)), "")
     }
 

@@ -200,9 +200,13 @@ extension PCM {
         if text(0, 4) == "caff" { return "caf" }
         if text(0, 4) == "fLaC" { return "flac" }
         if text(0, 4) == "OggS" { return "ogg" }
+        if text(0, 5) == "#!AMR" { return "amr" }
         if text(4, 4) == "ftyp" {
             let brand = text(8, 4).lowercased()
-            return brand.hasPrefix("qt") ? "mov" : brand.hasPrefix("m4a") || brand.hasPrefix("m4b") ? "m4a" : "mp4"
+            if brand.hasPrefix("qt") { return "mov" }
+            if brand.hasPrefix("m4a") || brand.hasPrefix("m4b") { return "m4a" }
+            if brand.hasPrefix("3g") { return "3gp" }
+            return "mp4"
         }
         if text(0, 3) == "ID3" { return "mp3" }
         if b.count >= 2, b[0] == 0xFF, b[1] & 0xE0 == 0xE0 {

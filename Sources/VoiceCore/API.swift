@@ -292,7 +292,7 @@ public final class VoiceAPI {
             guard let part = form.part("file") ?? form.parts.first(where: { $0.filename != nil }), !part.data.isEmpty else {
                 throw HTTPError(status: 400, code: "bad_request", message: "the upload has no file field")
             }
-            file = try write(part.data)
+            file = try write(part.data, name: part.filename)
         } else {
             switch req.body {
             case .empty:
@@ -310,9 +310,14 @@ public final class VoiceAPI {
         }
     }
 
-    /// Audio bytes into a file named for what they are, for the platform's reader.
-    private func write(_ data: Data) throws -> TempFile {
-        let ext = PCM.sniffExtension(data)
+    /// Audio bytes into a file named for what they are (or, failing that, what the upload was
+    /// called), for the platform's reader.
+    private func write(_ data: Data, name: String? = nil) throws -> TempFile {
+        var ext = PCM.sniffExtension(data)
+        if ext.isEmpty, let name {
+            let given = (name as NSString).pathExtension.lowercased()
+            if !given.isEmpty, given.count <= 5, given.allSatisfy({ $0.isLetter || $0.isNumber }) { ext = given }
+        }
         let file = try TempFile.make(in: directory, suffix: ext.isEmpty ? "" : "." + ext)
         try data.write(to: file.url)
         file.size = data.count
