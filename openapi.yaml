@@ -48,6 +48,7 @@ paths:
           headers:
             X-Voice: {schema: {type: string}, description: The voice id used}
             X-Sample-Rate: {schema: {type: integer, const: 24000}}
+            X-Duration: {schema: {type: number}, description: Seconds of audio (not sent when streaming)}
           content:
             audio/wav: {schema: {type: string, format: binary}}
             audio/pcm: {schema: {type: string, format: binary}}

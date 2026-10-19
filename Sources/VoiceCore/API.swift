@@ -164,7 +164,8 @@ public final class VoiceAPI {
             samples += try await engine.speak(sentence, voice: voice, speed: speed)
         }
         let body = wav ? PCM.wav(samples, rate: PCM.speakRate) : PCM.pcm16(samples)
-        return HTTPResponse(status: 200, headers: headers, body: .data(body))
+        let duration = JSON.round(Double(samples.count) / Double(PCM.speakRate))
+        return HTTPResponse(status: 200, headers: headers + [("X-Duration", String(duration))], body: .data(body))
     }
 
     private func say(_ req: HTTPRequest, _ s: ServiceSettings) throws -> HTTPResponse {

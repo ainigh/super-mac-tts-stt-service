@@ -143,8 +143,8 @@ Request (JSON):
 
 A plain-text body (`Content-Type: text/plain`) is taken as `text`, with the defaults.
 
-Response: `200`, `Content-Type: audio/wav` (or `audio/pcm`), with headers `X-Voice: af_heart` and
-`X-Sample-Rate: 24000`.
+Response: `200`, `Content-Type: audio/wav` (or `audio/pcm`), with headers `X-Voice: af_heart`,
+`X-Sample-Rate: 24000` and, when not streaming, `X-Duration: 2.35` (seconds of audio).
 
 **Streaming.** With `"stream": true` the response is chunked: a WAV header first (its length fields
 set to the maximum, as for any live stream), then the audio of each sentence as it's made. The

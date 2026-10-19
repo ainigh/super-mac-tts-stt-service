@@ -46,6 +46,7 @@ final class APITests: XCTestCase {
         XCTAssertEqual(r.status, 200)
         XCTAssertEqual(r.header("Content-Type"), "audio/wav")
         XCTAssertEqual(r.header("X-Voice"), "am_fenrir")
+        XCTAssertEqual(r.header("X-Duration"), "0.5")
         XCTAssertEqual(engine.spoken.map(\.0), ["Hello there.", "How are you?"])
         XCTAssertEqual(engine.spoken.first?.2, 1.5)
         let wav = PCM.readWAV(d)

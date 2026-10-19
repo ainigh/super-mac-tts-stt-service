@@ -84,7 +84,7 @@ public enum Access {
             ("Vary", "Origin"),
             ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
             ("Access-Control-Allow-Headers", "Content-Type, Authorization"),
-            ("Access-Control-Expose-Headers", "X-Voice, X-Sample-Rate"),
+            ("Access-Control-Expose-Headers", "X-Voice, X-Sample-Rate, X-Duration"),
             ("Access-Control-Max-Age", "600"),
         ]
     }
