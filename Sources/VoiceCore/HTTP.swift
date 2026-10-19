@@ -100,12 +100,15 @@ public struct HTTPError: Error, Equatable {
     public var message: String
     /// model_loading: how far the download has got (0 to 1).
     public var progress: Double?
+    /// 405: the method the route takes.
+    public var allow: String?
 
-    public init(status: Int, code: String, message: String, progress: Double? = nil) {
+    public init(status: Int, code: String, message: String, progress: Double? = nil, allow: String? = nil) {
         self.status = status
         self.code = code
         self.message = message
         self.progress = progress
+        self.allow = allow
     }
 }
 

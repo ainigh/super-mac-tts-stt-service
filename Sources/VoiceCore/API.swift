@@ -47,10 +47,11 @@ public final class VoiceAPI {
         var path = req.path
         if path.count > 1, path.hasSuffix("/") { path.removeLast() }
         guard let method = Self.routes[path] else {
-            throw HTTPError(status: 404, code: "not_found", message: "no such route: \(req.path) (see /api/health)")
+            throw HTTPError(status: 404, code: "not_found",
+                            message: "no such route: \(req.path); the routes: \(Self.routes.keys.sorted().joined(separator: " "))")
         }
         guard req.method == method || (method == "GET" && req.method == "HEAD") else {
-            throw HTTPError(status: 405, code: "bad_request", message: "\(path) takes \(method)")
+            throw HTTPError(status: 405, code: "bad_request", message: "\(path) takes \(method)", allow: method)
         }
         switch path {
         case "/", "/index.html":
@@ -389,6 +390,7 @@ public final class VoiceAPI {
     private func failure(_ e: HTTPError, openAI: Bool) -> HTTPResponse {
         var headers: [(String, String)] = []
         if e.code == "model_loading" { headers.append(("Retry-After", "5")) }
+        if let allow = e.allow { headers.append(("Allow", allow == "GET" ? "GET, HEAD" : allow)) }
         if openAI {
             let type = e.status >= 500 ? "server_error" : "invalid_request_error"
             return JSON.response(["error": ["message": e.message, "type": type, "code": e.code]], status: e.status, headers: headers)

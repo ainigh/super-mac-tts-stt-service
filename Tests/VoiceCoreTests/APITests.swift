@@ -245,10 +245,14 @@ final class APITests: XCTestCase {
     }
 
     func testUnknownRoutesAndMethods() async {
-        let (r, _) = await api.send("GET", "/api/nope")
+        let (r, d) = await api.send("GET", "/api/nope")
         XCTAssertEqual(r.status, 404)
+        XCTAssertTrue((json(d)["error"] as? String ?? "").contains("/api/tts"))
         let (r2, _) = await api.send("GET", "/api/tts")
         XCTAssertEqual(r2.status, 405)
+        XCTAssertEqual(r2.header("Allow"), "POST")
+        let (r3h, _) = await api.send("POST", "/api/health")
+        XCTAssertEqual(r3h.header("Allow"), "GET, HEAD")
         let (r3, d3) = await api.send("GET", "/")
         XCTAssertEqual(r3.status, 200)
         XCTAssertTrue(String(decoding: d3, as: UTF8.self).contains("<title>Super Voice</title>"))
