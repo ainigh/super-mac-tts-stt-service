@@ -85,6 +85,7 @@ final class APITests: XCTestCase {
             (#"{"text": "Hi", "voice": "alloy"}"#, 400, "unknown_voice"),
             (#"{"text": "Hi", "speed": 3}"#, 400, "bad_speed"),
             (#"{"text": "Hi", "speed": "fast"}"#, 400, "bad_speed"),
+            (#"{"text": "Hi", "speed": true}"#, 400, "bad_speed"),
             (#"{"text": "Hi", "format": "mp3"}"#, 400, "bad_request"),
             (#"{"text": "Hi""#, 400, "bad_request"),
             ("{\"text\": \"\(String(repeating: "a", count: 20_001))\"}", 413, "too_large"),

@@ -378,7 +378,12 @@ public final class VoiceAPI {
         let speed: Double
         switch value {
         case nil, is NSNull: return fallback
-        case let n as NSNumber: speed = n.doubleValue
+        case let n as NSNumber:
+            // JSON true/false also arrives as an NSNumber.
+            guard CFGetTypeID(n) != CFBooleanGetTypeID() else {
+                throw HTTPError(status: 400, code: "bad_speed", message: "speed must be a number")
+            }
+            speed = n.doubleValue
         case let s as String:
             guard let d = Double(s) else { throw HTTPError(status: 400, code: "bad_speed", message: "speed must be a number") }
             speed = d
