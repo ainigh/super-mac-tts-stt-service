@@ -119,6 +119,7 @@ timeout means Super Voice isn't running.
 | `heart` | the name |
 | `f1` … `f3`, `m1` … `m3` | best first: f1 Heart, f2 Bella, f3 Emma, m1 Michael, m2 Fenrir, m3 Puck |
 | `female` / `male` | f1 / m1 |
+| `uk` / `us` | the first voice with that accent: f3 Emma / f1 Heart |
 | nothing, `null`, `""` | the app's default voice |
 
 The short names `f1`–`f3` and `m1`–`m3` mean the same voices as in glassvoice and never change.

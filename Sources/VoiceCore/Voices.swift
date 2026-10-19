@@ -29,13 +29,15 @@ public struct Voice: Equatable, Sendable {
     }
 
     /// What a caller asked for: an id ("af_heart"), a name ("Heart"), a short name ("f1", "m3"),
-    /// "female" / "male". nil when it isn't one of them; nil or blank gives `default`.
+    /// "female" / "male", "uk" / "us". nil when it isn't one of them; nil or blank gives `default`.
     public static func resolve(_ asked: String?, default: Voice) -> Voice? {
         guard let asked, !asked.trimmingCharacters(in: .whitespaces).isEmpty else { return `default` }
         let key = asked.trimmingCharacters(in: .whitespaces).lowercased()
         switch key {
         case "female", "f", "woman": return all.first { $0.female }
         case "male", "m", "man": return all.first { !$0.female }
+        case "uk", "british": return all.first { $0.accent == "uk" }
+        case "us", "american": return all.first { $0.accent == "us" }
         default: return all.first { $0.id == key || $0.name.lowercased() == key || $0.alias == key }
         }
     }

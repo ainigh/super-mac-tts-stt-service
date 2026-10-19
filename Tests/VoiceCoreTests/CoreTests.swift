@@ -10,6 +10,8 @@ final class VoiceTests: XCTestCase {
         XCTAssertEqual(Voice.resolve("m3", default: d)?.id, "am_puck")
         XCTAssertEqual(Voice.resolve("female", default: d)?.id, "af_heart")
         XCTAssertEqual(Voice.resolve("male", default: d)?.id, "am_michael")
+        XCTAssertEqual(Voice.resolve("UK", default: d)?.id, "bf_emma")
+        XCTAssertEqual(Voice.resolve("us", default: d)?.id, "af_heart")
         XCTAssertEqual(Voice.resolve(nil, default: d)?.id, "am_michael")
         XCTAssertEqual(Voice.resolve(" ", default: d)?.id, "am_michael")
         XCTAssertNil(Voice.resolve("alloy", default: d))
