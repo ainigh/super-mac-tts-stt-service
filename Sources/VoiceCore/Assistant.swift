@@ -490,11 +490,11 @@ public final class OllamaClient: LanguageModel {
     }
 
     private func send(_ req: URLRequest) async throws -> Data {
-        let result: (Data, URLResponse)
+        let result: (Data, URLResponse?)
         do {
-            result = try await withCheckedThrowingContinuation { (k: CheckedContinuation<(Data, URLResponse), Error>) in
+            result = try await withCheckedThrowingContinuation { (k: CheckedContinuation<(Data, URLResponse?), Error>) in
                 URLSession.shared.dataTask(with: req) { data, response, error in
-                    if let error { k.resume(throwing: error) } else { k.resume(returning: (data ?? Data(), response ?? URLResponse())) }
+                    if let error { k.resume(throwing: error) } else { k.resume(returning: (data ?? Data(), response)) }
                 }.resume()
             }
         } catch {
