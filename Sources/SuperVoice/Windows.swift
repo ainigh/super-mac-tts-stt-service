@@ -56,7 +56,7 @@ final class Library: ObservableObject {
 /// The tools' windows: one of each, brought forward when opened again.
 enum Windows {
     enum Kind: String {
-        case read, dictate, transcribe, library
+        case read, dictate, transcribe, library, assistant, chats
 
         var title: String {
             switch self {
@@ -64,6 +64,8 @@ enum Windows {
             case .dictate: return "Dictate"
             case .transcribe: return "Transcribe"
             case .library: return "Library"
+            case .assistant: return "AI Listen"
+            case .chats: return "AI Library"
             }
         }
 
@@ -73,6 +75,8 @@ enum Windows {
             case .dictate: return NSSize(width: 600, height: 520)
             case .transcribe: return NSSize(width: 680, height: 580)
             case .library: return NSSize(width: 980, height: 680)
+            case .assistant: return NSSize(width: 640, height: 680)
+            case .chats: return NSSize(width: 940, height: 640)
             }
         }
     }
@@ -92,6 +96,8 @@ enum Windows {
         case .dictate: view = AnyView(DictateView())
         case .transcribe: view = AnyView(TranscribeView())
         case .library: view = AnyView(LibraryView())
+        case .assistant: view = AnyView(AssistantView())
+        case .chats: view = AnyView(ChatsView())
         }
         let w = NSWindow(contentRect: NSRect(origin: .zero, size: kind.size),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],

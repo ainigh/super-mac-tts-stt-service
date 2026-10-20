@@ -1,17 +1,39 @@
 import Foundation
 
-/// Something written down and kept: a dictation, a file's transcript, or text kept from Read aloud.
+/// One thing said in a chat with the assistant, by the user or by it.
+public struct ChatTurn: Codable, Equatable, Sendable {
+    public enum Role: String, Codable, Sendable {
+        case user, assistant
+    }
+
+    public var role: Role
+    public var text: String
+    public var time: Date
+
+    public init(role: Role, text: String, time: Date = Date()) {
+        self.role = role
+        self.text = text
+        self.time = time
+    }
+}
+
+/// Something written down and kept: a dictation, a file's transcript, text kept from Read aloud,
+/// or a chat with the assistant (in the AI library).
 public struct LibraryRecord: Codable, Equatable, Identifiable, Sendable {
     public enum Kind: String, Codable, CaseIterable, Sendable {
-        case dictation, transcript, note
+        case dictation, transcript, note, chat
 
         public var title: String {
             switch self {
             case .dictation: return "Dictation"
             case .transcript: return "Transcript"
             case .note: return "Note"
+            case .chat: return "Chat"
             }
         }
+
+        /// The kinds the library window shows (chats have the AI library).
+        public static var library: [Kind] { allCases.filter { $0 != .chat } }
     }
 
     public var id: UUID
@@ -30,10 +52,12 @@ public struct LibraryRecord: Codable, Equatable, Identifiable, Sendable {
     /// "board" on the board's note. (Entries from before the board kept one note had what they were
     /// filed under; they're folded into the note once, and lose it.)
     public var tag: String?
+    /// A chat's turns (chats); `text` is the same, written out.
+    public var turns: [ChatTurn]?
 
     public init(kind: Kind, text: String, title: String? = nil, created: Date = Date(), duration: Double? = nil,
-                source: String? = nil, segments: [TimedText]? = nil, tag: String? = nil) {
-        id = UUID()
+                source: String? = nil, segments: [TimedText]? = nil, tag: String? = nil, turns: [ChatTurn]? = nil, id: UUID = UUID()) {
+        self.id = id
         self.kind = kind
         self.text = text
         self.title = title ?? Self.title(for: text)
@@ -44,6 +68,7 @@ public struct LibraryRecord: Codable, Equatable, Identifiable, Sendable {
         self.segments = segments
         starred = false
         self.tag = tag
+        self.turns = turns
     }
 
     /// A title from the text's first words: "Remind me to call Sam at four…".

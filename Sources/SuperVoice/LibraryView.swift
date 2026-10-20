@@ -67,8 +67,10 @@ struct LibraryView: View {
     }
 
     private var shown: [LibraryRecord] {
-        library.filter(kind: kind, query: query, starredOnly: starredOnly)
+        library.filter(kind: kind, query: query, starredOnly: starredOnly).filter { $0.kind != .chat }
     }
+
+    private var kept: Int { library.items.filter { $0.kind != .chat }.count }
 
     private var header: some View {
         HStack(spacing: 12) {
@@ -80,9 +82,12 @@ struct LibraryView: View {
                             in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             VStack(alignment: .leading, spacing: 1) {
                 Text("Library").font(.system(size: 18, weight: .semibold))
-                Text("\(library.items.count) kept · dictations, transcripts and notes").font(.system(size: 12)).foregroundStyle(.secondary)
+                Text("\(kept) kept · dictations, transcripts and notes").font(.system(size: 12)).foregroundStyle(.secondary)
             }
             Spacer()
+            Button { Windows.show(.chats) } label: { Label("AI library", systemImage: "sparkles") }
+                .buttonStyle(PillButton(tint: Palette.violet, filled: false))
+                .help("The chats with the assistant")
             Button { Windows.show(.dictate) } label: { Label("Dictate", systemImage: "mic.fill") }
                 .buttonStyle(PillButton(tint: Palette.pink, filled: true))
             Button { Windows.show(.transcribe) } label: { Label("Transcribe", systemImage: "waveform.badge.plus") }
@@ -104,7 +109,7 @@ struct LibraryView: View {
             .background(Color.primary.opacity(0.06), in: Capsule())
             .frame(maxWidth: 260)
             Button("All") { kind = nil }.buttonStyle(Chip(selected: kind == nil))
-            ForEach(LibraryRecord.Kind.allCases, id: \.self) { k in
+            ForEach(LibraryRecord.Kind.library, id: \.self) { k in
                 Button(k.title + "s") { kind = k }.buttonStyle(Chip(selected: kind == k, tint: Card.color(k)))
             }
             Button { starredOnly.toggle() } label: { Image(systemName: starredOnly ? "star.fill" : "star") }
@@ -116,10 +121,10 @@ struct LibraryView: View {
 
     private var empty: some View {
         VStack(spacing: 10) {
-            Image(systemName: library.items.isEmpty ? "tray" : "magnifyingglass")
+            Image(systemName: kept == 0 ? "tray" : "magnifyingglass")
                 .font(.system(size: 34, weight: .light)).foregroundStyle(.secondary)
-            Text(library.items.isEmpty ? "Nothing kept yet" : "Nothing matches").font(.system(size: 15, weight: .medium))
-            Text(library.items.isEmpty ? "Dictations, transcripts and notes you keep show up here." : "Try other words, or All.")
+            Text(kept == 0 ? "Nothing kept yet" : "Nothing matches").font(.system(size: 15, weight: .medium))
+            Text(kept == 0 ? "Dictations, transcripts and notes you keep show up here." : "Try other words, or All.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -150,6 +155,7 @@ private struct Card: View {
         case .dictation: return Palette.pink
         case .transcript: return Palette.teal
         case .note: return Palette.indigo
+        case .chat: return Palette.violet
         }
     }
 
@@ -158,6 +164,7 @@ private struct Card: View {
         case .dictation: return "mic.fill"
         case .transcript: return "waveform"
         case .note: return "text.alignleft"
+        case .chat: return "sparkles"
         }
     }
 
