@@ -262,6 +262,30 @@ final class APITests: XCTestCase {
         XCTAssertTrue(String(decoding: d3, as: UTF8.self).contains("<title>Super Voice</title>"))
     }
 
+    func testTheAPIDocumentIsServedAndMatchesAPIMD() async throws {
+        let (r, d) = await api.send("GET", "/api.md")
+        XCTAssertEqual(r.status, 200)
+        XCTAssertEqual(r.header("Content-Type"), "text/markdown; charset=utf-8")
+        let doc = String(decoding: d, as: UTF8.self)
+        XCTAssertTrue(doc.hasPrefix("# Super Voice API"))
+        XCTAssertTrue(doc.contains("POST /api/tts"))
+        XCTAssertTrue(doc.contains("http://127.0.0.1:8767"))
+
+        // The embedded copy is generated from API.md; the two must not drift apart.
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let file = try String(contentsOf: root.appendingPathComponent("API.md"), encoding: .utf8)
+        XCTAssertEqual(APIDoc.markdown, file, "API.md changed: run scripts/embed-api-doc.sh")
+
+        // On another port, the document says that port (and only that one).
+        settings.port = 9000
+        let (_, d2) = await api.send("GET", "/api.md")
+        let moved = String(decoding: d2, as: UTF8.self)
+        XCTAssertTrue(moved.contains("http://127.0.0.1:9000"))
+        XCTAssertTrue(moved.contains("localhost:9000/api/tts"))
+        XCTAssertFalse(moved.contains(":8767"))
+        XCTAssertTrue(moved.contains("127.0.0.1:8766"), "glassvoice's port is not ours to change")
+    }
+
     func testBrowsersFromThisMachineGetCORSAndOthersAreRefused() async {
         let (pre, _) = await api.send("OPTIONS", "/api/tts", headers: ["Origin": "http://localhost:3000"])
         XCTAssertEqual(pre.status, 204)

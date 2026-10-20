@@ -35,7 +35,7 @@ enum StatusPage {
 <body>
 <main>
   <h1>Super Voice</h1>
-  <p class="sub">Speech on this Mac, for every app: <code id="base"></code> · <a href="/api/health">/api/health</a></p>
+  <p class="sub">Speech on this Mac, for every app: <code id="base"></code> · <a href="/api/health">/api/health</a> · <a href="/api.md">API docs</a></p>
 
   <section class="card"><h2>Status</h2><div class="pills" id="status">Checking…</div></section>
 
