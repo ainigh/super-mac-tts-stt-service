@@ -71,12 +71,14 @@ final class BoardModel: ObservableObject {
         sounds = saved.object(forKey: "boardSounds") as? Bool ?? true
         listener.onUtterance = { [weak self] said in self?.heard(said) }
         listener.$text.receive(on: DispatchQueue.main).sink { [weak self] t in self?.hearing = t }.store(in: &watching)
-        // Dictating takes the microphone, and what the Mac says itself isn't to be heard: always
-        // listen waits meanwhile (dropping what it half heard), then carries on.
+        // Dictating takes the microphone, and what the Mac says itself isn't to be heard, and AI
+        // Listen has the microphone while it's on: always listen waits meanwhile (dropping what it
+        // half heard), then carries on.
         let service = Service.shared
         Recorder.shared.$on.removeDuplicates()
-            .combineLatest(service.reader.$speaking.removeDuplicates(), service.speaker.$speaking.removeDuplicates())
-            .map { $0 || $1 || $2 }
+            .combineLatest(service.reader.$speaking.removeDuplicates(), service.speaker.$speaking.removeDuplicates(),
+                           AssistantModel.shared.$on.removeDuplicates())
+            .map { $0 || $1 || $2 || $3 }
             .removeDuplicates()
             .dropFirst()
             .receive(on: DispatchQueue.main)
@@ -104,7 +106,7 @@ final class BoardModel: ObservableObject {
     /// Listens, unless dictation or the Mac's own voice has the floor.
     private func resume() {
         let service = Service.shared
-        guard listening, !Recorder.shared.on, !service.reader.speaking, !service.speaker.speaking else { return }
+        guard listening, !Recorder.shared.on, !service.reader.speaking, !service.speaker.speaking, !AssistantModel.shared.on else { return }
         listener.start()
     }
 
@@ -174,9 +176,9 @@ final class BoardModel: ObservableObject {
     // MARK: Hearing
 
     func heard(_ utterance: String) {
-        // Not what the Mac itself is saying, and not while dictating.
+        // Not what the Mac itself is saying, and not while dictating or talking to the assistant.
         let service = Service.shared
-        guard !service.reader.speaking, !service.speaker.speaking, !Recorder.shared.on else { return }
+        guard !service.reader.speaking, !service.speaker.speaking, !Recorder.shared.on, !AssistantModel.shared.on else { return }
         if Board.isWake(utterance) {
             activity()
             Main.delegate.togglePanel(byVoice: true)

@@ -7,6 +7,7 @@ import VoiceCore
 struct PanelView: View {
     @EnvironmentObject var service: Service
     @ObservedObject var board = BoardModel.shared
+    @ObservedObject var assistant = AssistantModel.shared
     var close: () -> Void
 
     var body: some View {
@@ -98,8 +99,14 @@ struct PanelView: View {
             ToolTile(title: "Transcribe", detail: "An audio file to text", symbol: "waveform.badge.plus", colors: [Palette.teal, Palette.blue]) {
                 close(); Windows.show(.transcribe)
             }
-            ToolTile(title: "Library", detail: "\(Library.shared.items.count) saved", symbol: "square.grid.2x2.fill", colors: [Palette.green, Palette.teal]) {
+            ToolTile(title: "Library", detail: "\(Library.shared.items.filter { $0.kind != .chat }.count) saved", symbol: "square.grid.2x2.fill", colors: [Palette.green, Palette.teal]) {
                 close(); Windows.show(.library)
+            }
+            ToolTile(title: "AI listen", detail: assistant.on ? "On: say “Micky”, then talk" : "Talk with Ollama", symbol: "sparkles", colors: [Palette.violet, Palette.pink]) {
+                close(); Windows.show(.assistant)
+            }
+            ToolTile(title: "AI library", detail: "\(Library.shared.items.filter { $0.kind == .chat }.count) chats", symbol: "bubble.left.and.text.bubble.right.fill", colors: [Palette.blue, Palette.violet]) {
+                close(); Windows.show(.chats)
             }
         }
     }

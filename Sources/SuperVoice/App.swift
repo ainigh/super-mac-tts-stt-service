@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Updater.shared.start()
         // The icon says what's going on.
         Service.shared.objectWillChange
-            .merge(with: Recorder.shared.objectWillChange, BoardModel.shared.objectWillChange)
+            .merge(with: Recorder.shared.objectWillChange, BoardModel.shared.objectWillChange, AssistantModel.shared.objectWillChange)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in DispatchQueue.main.async { self?.refreshIcon() } }
             .store(in: &watching)
@@ -60,6 +60,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let symbol: String
         if Recorder.shared.on {
             symbol = "record.circle"
+        } else if AssistantModel.shared.on {
+            symbol = "sparkles"
         } else if board.listening {
             symbol = "ear"
         } else if Service.shared.isServing {
@@ -72,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.image = image
         var tip = Service.shared.isServing ? "Super Voice: serving at \(Service.shared.baseURL)" : "Super Voice: not serving"
         if board.listening { tip += "\nAlways listening (say “mouse”, then talk: it goes in the board's note)" }
+        if AssistantModel.shared.on { tip += "\nAI Listen is on (say “Micky” or “Ollama”, then talk)" }
         item.button?.toolTip = tip
     }
 
