@@ -144,6 +144,13 @@ struct PanelView: View {
                 .buttonStyle(.borderless)
                 .help("Copy \(service.baseURL)")
                 Button {
+                    service.copy(APIDoc.markdown(port: service.settings.port))
+                } label: {
+                    Label("Copy API docs", systemImage: "doc.text").font(.system(size: 11))
+                }
+                .buttonStyle(.borderless)
+                .help("Copy the whole API documentation (API.md), to hand to another app or an assistant writing a client")
+                Button {
                     NSWorkspace.shared.open(URL(string: service.baseURL)!)
                 } label: {
                     Label("Try it", systemImage: "safari").font(.system(size: 11))

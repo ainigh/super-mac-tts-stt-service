@@ -57,6 +57,7 @@ curl -s localhost:8767/v1/audio/transcriptions -F file=@note.m4a -F model=parake
 | `POST /v1/audio/speech` | `openai` + `tts` | OpenAI-compatible TTS |
 | `POST /v1/audio/transcriptions` | `openai` + `stt` | OpenAI-compatible STT |
 | `GET  /` | — | a status page, with a box to try each endpoint |
+| `GET  /api.md` | — | this document, as `text/markdown` (with the port it's actually on) |
 
 **Switches.** Each endpoint group can be turned off or on from the menu bar panel (and the whole
 server stopped and started) without quitting the app. A call to a group that's off gets
@@ -320,4 +321,6 @@ return the same things, and voices `f1`–`f3` / `m1`–`m3` are the same voices
 `/api/events` and `/api/command` (Glass's live voice with barge-in), the `language` event (Parakeet
 doesn't report one), and voices beyond the six.
 
-A machine-readable description is in [openapi.yaml](openapi.yaml).
+A machine-readable description is in [openapi.yaml](openapi.yaml). The service serves this document
+itself at `GET /api.md`, and the panel's **Copy API docs** puts it on the clipboard, so it can be
+handed to another app, or pasted into an assistant that's writing a client.

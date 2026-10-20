@@ -11,6 +11,16 @@ tags:
   - name: native
   - name: openai
 paths:
+  /api.md:
+    get:
+      tags: [native]
+      summary: The API documentation (API.md), with the port the service is actually on
+      responses:
+        "200":
+          description: OK
+          content:
+            text/markdown:
+              schema: {type: string}
   /api/health:
     get:
       tags: [native]

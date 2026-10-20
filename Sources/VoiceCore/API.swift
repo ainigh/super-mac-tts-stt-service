@@ -39,7 +39,7 @@ public final class VoiceAPI {
     }
 
     private static let routes: [String: String] = [
-        "/": "GET", "/index.html": "GET", "/favicon.ico": "GET", "/api/health": "GET", "/api/voices": "GET",
+        "/": "GET", "/index.html": "GET", "/favicon.ico": "GET", "/api.md": "GET", "/api/health": "GET", "/api/voices": "GET",
         "/api/tts": "POST", "/api/stt": "POST", "/api/transcribe": "POST", "/api/say": "POST",
         "/api/say/stop": "POST", "/v1/models": "GET", "/v1/audio/speech": "POST", "/v1/audio/transcriptions": "POST",
     ]
@@ -59,6 +59,8 @@ public final class VoiceAPI {
             return HTTPResponse(contentType: "text/html; charset=utf-8", data: Data(StatusPage.html.utf8))
         case "/favicon.ico":
             return HTTPResponse(status: 204)
+        case "/api.md":
+            return HTTPResponse(contentType: "text/markdown; charset=utf-8", data: Data(APIDoc.markdown(port: s.port).utf8))
         case "/api/health":
             return JSON.response(health(s))
         case "/api/voices":
