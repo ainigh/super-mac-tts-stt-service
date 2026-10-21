@@ -83,9 +83,12 @@ final class AssistantModel: ObservableObject {
     /// Little sounds when it wakes and hears (the off sound always plays).
     @Published var sounds: Bool { didSet { UserDefaults.standard.set(sounds, forKey: "assistantSounds") } }
 
+    /// The microphone and the voice share one engine, echo cancelled: what the voice says is taken
+    /// back out of what the microphone hears, so it doesn't hear itself.
+    static let echo = EchoCancel()
     /// Its own voice, so stopping it stops nothing else.
-    let voice = SpeechPlayer()
-    let listener = Recorder(pauseToEnd: 1.2, holdIfUnfinished: TurnEnd.hold)
+    let voice = SpeechPlayer(shared: AssistantModel.echo)
+    let listener = Recorder(pauseToEnd: 1.2, holdIfUnfinished: TurnEnd.hold, shared: AssistantModel.echo)
     /// Always listen: hears "mouse" while it's off.
     let wakeListener = Recorder(pauseToEnd: 1.0, holdIfUnfinished: TurnEnd.hold)
     /// The sound it makes as it turns off.
@@ -274,7 +277,7 @@ final class AssistantModel: ObservableObject {
         var said = utterance
         if settings.bargeIn, voice.speaking || Date() < echoUntil {
             // While it reads (or just after), what's heard may be the answer coming back.
-            guard let mine = Echo.interruption(utterance, reading: reading) else { return }
+            guard let mine = Echo.interruption(utterance, reading: reading, cancelled: Self.echo.cancelsEcho) else { return }
             if voice.speaking { voice.stop() }
             said = mine
         }
@@ -294,7 +297,7 @@ final class AssistantModel: ObservableObject {
 
     /// Talked over the answer: it stops reading, so the rest is heard.
     private func bargeIn(_ live: String) {
-        guard on, settings.bargeIn, voice.speaking, !live.isEmpty, Echo.interruption(live, reading: reading) != nil else { return }
+        guard on, settings.bargeIn, voice.speaking, !live.isEmpty, Echo.interruption(live, reading: reading, cancelled: Self.echo.cancelsEcho) != nil else { return }
         voice.stop()
         echoUntil = Date().addingTimeInterval(2)
         say("Listening")

@@ -27,7 +27,9 @@ final class SpeechPlayer: ObservableObject {
         var offset: Int
     }
 
-    private let engine = AVAudioEngine()
+    /// The engine shared with a microphone, echo cancelled (AI Listen's), or nil: its own.
+    let echo: EchoCancel?
+    private let engine: AVAudioEngine
     private let player = AVAudioPlayerNode()
     private let format = AVAudioFormat(standardFormatWithSampleRate: Double(PCM.speakRate), channels: 1)!
     private var lines: [Line] = []
@@ -45,7 +47,9 @@ final class SpeechPlayer: ObservableObject {
     private var pausedFor = 0.0
     private var ticker: Timer?
 
-    init() {
+    init(shared: EchoCancel? = nil) {
+        self.echo = shared
+        engine = shared?.engine ?? AVAudioEngine()
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
     }
@@ -95,7 +99,7 @@ final class SpeechPlayer: ObservableObject {
         playing = nil
         busy = false
         player.stop()
-        if engine.isRunning { engine.stop() }
+        halt()
         ticker?.invalidate()
         speaking = false
         paused = false
@@ -169,10 +173,14 @@ final class SpeechPlayer: ObservableObject {
         }
         audio.withUnsafeBufferPointer { data.update(from: $0.baseAddress!, count: audio.count) }
         buffer.frameLength = AVAudioFrameCount(audio.count)
-        if !engine.isRunning {
-            engine.prepare()
+        if !engine.isRunning || echo != nil {
             do {
-                try engine.start()
+                if let echo {
+                    try echo.start(for: "voice")
+                } else {
+                    engine.prepare()
+                    try engine.start()
+                }
             } catch {
                 problem = "Couldn't play: \(error.localizedDescription)"
                 stop()
@@ -213,11 +221,16 @@ final class SpeechPlayer: ObservableObject {
         playing = nil
         ticker?.invalidate()
         player.stop()
-        if engine.isRunning { engine.stop() }
+        halt()
         speaking = false
         paused = false
         word = nil
         onDone?()
+    }
+
+    /// The engine stops, unless it's shared and the microphone still needs it.
+    private func halt() {
+        if let echo { echo.stop(for: "voice") } else if engine.isRunning { engine.stop() }
     }
 
     /// Says a few words in `voice`, so choosing one lets you hear it.
