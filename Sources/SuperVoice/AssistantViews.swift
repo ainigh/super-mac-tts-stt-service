@@ -455,7 +455,7 @@ struct ChatBubble: View {
                         }
                     }
                 Text(turn.speaker + (turn.to.map { " → \($0)" } ?? "") + " · " + Self.time.string(from: turn.time))
-                    .font(.system(size: 10)).foregroundStyle(jerry ? Palette.teal : .tertiary)
+                    .font(.system(size: 10)).foregroundStyle(jerry ? AnyShapeStyle(Palette.teal) : AnyShapeStyle(.tertiary))
             }
             if !user { Spacer(minLength: 60) }
         }
