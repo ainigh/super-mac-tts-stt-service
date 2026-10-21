@@ -107,6 +107,12 @@ final class ToolRunTests: XCTestCase {
         XCTAssertEqual(runner.sent.last?.method, "POST")
         let r13 = await ToolRunTools.run("stop_run", ["id": "6C1D"], via: runner)
         XCTAssertEqual(r13, "It had already ended.")
+        // An id is one segment of the path, whatever the model wrote; a limit, whatever number.
+        XCTAssertEqual(ToolRunTools.escaped("../x?y z"), "%2E%2E%2Fx%3Fy%20z")
+        XCTAssertEqual(AssistantTools.limit(["limit": 1e300], default: 10), 100)
+        XCTAssertEqual(AssistantTools.limit(["limit": Double.nan], default: 10), 10)
+        XCTAssertEqual(AssistantTools.limit(["limit": 0], default: 10), 1)
+        XCTAssertEqual(ToolRunTools.outcome(["name": "a.sh", "state": "failed", "code": 1e300]), "a.sh: failed.\nIt printed nothing.")
 
         // Not one of these, and the app not running.
         let none = await ToolRunTools.run("list_chats", [:], via: runner)

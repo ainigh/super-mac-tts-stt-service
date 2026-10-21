@@ -132,6 +132,11 @@ final class APITests: XCTestCase {
         XCTAssertEqual(r.status, 200)
         XCTAssertEqual(json(d)["duration"] as? Double, 2)
         XCTAssertEqual(engine.written, [32_000])
+        // A rate or channel count no audio has is refused, or kept sane, not a crash.
+        let (bad, _) = await api.send("POST", "/api/stt?format=pcm&rate=1e-300", body: pcm)
+        XCTAssertEqual(bad.status, 400)
+        let (many, _) = await api.send("POST", "/api/stt?format=pcm&rate=8000&channels=4611686018427387904", body: pcm)
+        XCTAssertNotEqual(many.status, 500)
     }
 
     func testSilenceIsNoTextNotAnError() async {

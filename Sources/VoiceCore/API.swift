@@ -281,7 +281,10 @@ public final class VoiceAPI {
     private func open(_ req: HTTPRequest, form: Multipart? = nil) throws -> (reader: AudioReader, keep: AnyObject?) {
         if req.query["format"]?.lowercased() == "pcm" {
             let rate = Double(req.query["rate"] ?? "") ?? Double(PCM.listenRate)
-            let channels = Int(req.query["channels"] ?? "") ?? 1
+            guard (1000...384_000).contains(rate) else {
+                throw HTTPError(status: 400, code: "bad_request", message: "rate is from 1000 to 384000")
+            }
+            let channels = min(max(Int(req.query["channels"] ?? "") ?? 1, 1), 64)
             let samples = PCM.readPCM16(try req.body.data(), channels: channels)
             return (SampleReader(samples: samples, rate: rate), nil)
         }

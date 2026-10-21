@@ -293,6 +293,12 @@ public enum AssistantTools {
         return (o["name"] ?? o["function"]) is String && (o["arguments"] ?? o["args"] ?? o["parameters"] ?? o["input"]) != nil
     }
 
+    /// A tool's "limit" argument, from 1 to 100; whatever number the model wrote.
+    static func limit(_ arguments: [String: Any], default d: Int) -> Int {
+        guard let n = ToolRunTools.number(arguments["limit"]), n.isFinite else { return d }
+        return Int(min(max(n, 1), 100))
+    }
+
     /// The answer without its tool calls (and the code fences around them): what's left to say.
     public static func stripped(_ content: String) -> String {
         let chars = Array(content.utf8)
@@ -319,7 +325,7 @@ public enum AssistantTools {
     /// Runs a library tool. `current`: this chat, which the model doesn't get to read back. The
     /// answer is text for the model (JSON for lists); nil when it isn't a library tool.
     public static func run(_ name: String, _ arguments: [String: Any], library: [LibraryRecord], current: UUID?) -> String? {
-        let limit = min(max((arguments["limit"] as? Int) ?? Int((arguments["limit"] as? Double) ?? 20), 1), 100)
+        let limit = Self.limit(arguments, default: 20)
         let query = (arguments["query"] as? String) ?? ""
         let ids = (arguments["ids"] as? [String]) ?? (arguments["ids"] as? String).map { [$0] } ?? (arguments["id"] as? String).map { [$0] } ?? []
         switch name {
@@ -455,6 +461,17 @@ public final class Conversation {
     }
 
     public var isEmpty: Bool { turns.isEmpty }
+
+    /// The chat as it is now, apart from this one: a question still running here doesn't touch it.
+    public func copy() -> Conversation {
+        let c = Conversation(llm: llm, model: model, library: library, id: id, created: created)
+        c.turns = turns
+        c.wire = wire
+        c.toolCalls = toolCalls
+        c.runner = runner
+        c.maxToolRounds = maxToolRounds
+        return c
+    }
 
     /// The tools the model may call.
     public var tools: [AssistantTools.Tool] { AssistantTools.library + (runner == nil ? [] : ToolRunTools.tools) }
