@@ -19,7 +19,7 @@ final class ToolRunTests: XCTestCase {
     func testTheToolsOverToolMacToolRun() async throws {
         let runner = FakeRunner()
         runner.script = [(200, ["folder": "/Users/sam/Scripts", "scripts": [
-            ["name": "hello.sh", "language": "bash", "language_name": "Bash", "summary": "Says hello", "dangers": [], "asks_for_input": false],
+            ["name": "hello.sh", "language": "bash", "language_name": "Bash", "summary": "Says hello", "dangers": [String](), "asks_for_input": false],
             ["name": "tidy.py", "language_name": "Python", "summary": "Moves old downloads to the Trash", "dangers": ["deletes files"], "asks_for_input": true],
         ]])]
         let scripts_ = await ToolRunTools.run("list_scripts", [:], via: runner)
