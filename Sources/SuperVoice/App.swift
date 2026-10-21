@@ -39,11 +39,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.onCancel = { [weak self] in self?.hide() }
         panel.onMouseMoved = { [weak self] in self?.noteActivity() }
         Service.shared.launch()
-        BoardModel.shared.launch()
+        AssistantModel.shared.launch()
         Updater.shared.start()
         // The icon says what's going on.
         Service.shared.objectWillChange
-            .merge(with: Recorder.shared.objectWillChange, BoardModel.shared.objectWillChange, AssistantModel.shared.objectWillChange)
+            .merge(with: Recorder.shared.objectWillChange, SkillsModel.shared.objectWillChange, AssistantModel.shared.objectWillChange)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in DispatchQueue.main.async { self?.refreshIcon() } }
             .store(in: &watching)
@@ -56,13 +56,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshIcon() {
-        let board = BoardModel.shared
+        let assistant = AssistantModel.shared
         let symbol: String
         if Recorder.shared.on {
             symbol = "record.circle"
         } else if AssistantModel.shared.on {
             symbol = "sparkles"
-        } else if board.listening {
+        } else if assistant.alwaysListen {
             symbol = "ear"
         } else if Service.shared.isServing {
             symbol = "waveform"
@@ -73,21 +73,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         image?.isTemplate = true
         item.button?.image = image
         var tip = Service.shared.isServing ? "Super Voice: serving at \(Service.shared.baseURL)" : "Super Voice: not serving"
-        if board.listening { tip += "\nAlways listening (say “mouse”, then talk: it goes in the board's note; say “Micky”, then talk, to talk with Ollama)" }
-        if AssistantModel.shared.on { tip += AssistantModel.shared.awake ? "\nAI Listen is on: just talk" : "\nAI Listen is on (say “Micky” or “Ollama”, then talk)" }
+        if assistant.on {
+            tip += "\nAI Listen is on: just talk"
+        } else if assistant.alwaysListen {
+            tip += "\nListening for “\(Assistant.wakeWords[0][0])” (say it, then talk with Ollama)"
+        }
         item.button?.toolTip = tip
     }
 
     @objc private func toggle() {
         panel.isVisible ? hide() : show()
-    }
-
-    /// The panel's open: what's said goes on the board.
-    var panelShown: Bool { panel?.isVisible ?? false }
-
-    /// "Mouse": opens it without taking the keyboard from the app you're in, or closes it.
-    func togglePanel(byVoice: Bool) {
-        panel.isVisible ? hide() : show(takeKeyboard: !byVoice)
     }
 
     func show(takeKeyboard: Bool = true) {
@@ -109,7 +104,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func hide() {
         panel.orderOut(nil)
-        BoardModel.shared.panelClosed()
         if let outsideClicks { NSEvent.removeMonitor(outsideClicks) }
         outsideClicks = nil
         idleTimer?.invalidate()

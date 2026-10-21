@@ -6,7 +6,7 @@ import VoiceCore
 /// endpoint's switch, and the bottom bar.
 struct PanelView: View {
     @EnvironmentObject var service: Service
-    @ObservedObject var board = BoardModel.shared
+    @ObservedObject var board = SkillsModel.shared
     @ObservedObject var assistant = AssistantModel.shared
     /// Watched, so the counts on the tiles change while the panel's open.
     @ObservedObject var library = Library.shared
@@ -48,22 +48,20 @@ struct PanelView: View {
             }
             Spacer()
             Button {
-                board.setListening(!board.listening)
+                assistant.setAlwaysListen(!assistant.alwaysListen)
             } label: {
-                Label("Listen", systemImage: board.listening ? "ear.fill" : "ear")
+                Label("Listen", systemImage: assistant.alwaysListen ? "ear.fill" : "ear")
             }
-            .buttonStyle(PillButton(tint: Palette.pink, filled: board.listening))
-            .help(board.listening ? "Always listening: say “mouse”, then talk, and it goes in the board's note; say “Micky”, then talk, to talk with Ollama. Click to stop."
-                                  : "Always listen: say “mouse”, then talk, and it goes in the board's note; say “Micky”, then talk, to talk with Ollama")
-            if !board.listening {
-                Button {
-                    board.pinned.toggle()
-                } label: {
-                    Image(systemName: board.pinned ? "sidebar.right" : "rectangle.split.3x1")
-                }
-                .buttonStyle(PillButton(tint: Palette.violet, filled: board.pinned))
-                .help(board.pinned ? "Hide the board" : "Show the board (voice commands, the note)")
+            .buttonStyle(PillButton(tint: Palette.pink, filled: assistant.alwaysListen))
+            .help(assistant.alwaysListen ? "Always listening for “\(Assistant.wakeWords[0][0])”: say it, then talk with Ollama. Nothing else is acted on. Click to stop."
+                                         : "Always listen for “\(Assistant.wakeWords[0][0])”: say it, then talk with Ollama (nothing else said is acted on)")
+            Button {
+                board.pinned.toggle()
+            } label: {
+                Image(systemName: board.pinned ? "sidebar.right" : "rectangle.split.3x1")
             }
+            .buttonStyle(PillButton(tint: Palette.violet, filled: board.pinned))
+            .help(board.pinned ? "Hide the skills" : "Show the skills (what the model can use, and what it used)")
             Button(service.wantsServing ? "Stop" : "Start") {
                 service.wantsServing ? service.stopServing() : service.startServing()
             }
@@ -109,13 +107,16 @@ struct PanelView: View {
             ToolTile(title: "AI listen", detail: assistant.on ? "On: just talk (click to stop)" : "Talk with Ollama", symbol: assistant.on ? "stop.fill" : "sparkles",
                      colors: [Palette.violet, Palette.pink]) {
                 // Talk right away, no wake word, and no window: the chat works without it (AI library shows it).
-                close(); assistant.toggleTalking()
+                assistant.toggle()
             }
             .help(assistant.on ? "Stop talking with Ollama (the chat stays in the AI library). Right-click for its window."
                                : "Talk with Ollama now: just talk, no wake word. Right-click for its window and settings.")
             .contextMenu {
                 Button("Open AI Listen window") { close(); Windows.show(.assistant) }
-                Button(assistant.on ? "Stop" : "Start, listening for “\(Assistant.name)”") { close(); assistant.toggle() }
+                Button(assistant.alwaysListen ? "Stop listening for “\(Assistant.wakeWords[0][0])”" : "Always listen for “\(Assistant.wakeWords[0][0])”") {
+                    assistant.setAlwaysListen(!assistant.alwaysListen)
+                }
+                Toggle("Talk over it to stop it (barge in)", isOn: Binding(get: { assistant.settings.bargeIn }, set: { v in assistant.change { $0.bargeIn = v } }))
                 Toggle("Let the model think (slower)", isOn: Binding(get: { assistant.settings.thinking }, set: { assistant.setThinking($0) }))
             }
             ToolTile(title: "AI library", detail: chats == 0 ? "No chats yet" : counted(chats, "chat"), symbol: "bubble.left.and.text.bubble.right.fill", colors: [Palette.blue, Palette.violet]) {
@@ -407,10 +408,11 @@ struct PillButton: ButtonStyle {
     }
 }
 
-/// Everything the panel holds: the first column, and the board's columns beside it when they're
-/// wanted. Reports its size, so the panel fits it as columns come and go.
+/// Everything the panel holds: the first column, and the skills' columns beside it when they're
+/// wanted (AI Listen on, or pinned). Reports its size, so the panel fits it as columns come and go.
 struct PanelRoot: View {
-    @ObservedObject var board = BoardModel.shared
+    @ObservedObject var board = SkillsModel.shared
+    @ObservedObject var assistant = AssistantModel.shared
     var close: () -> Void
     var resized: (CGSize) -> Void
     /// The first column's height, which the others take (nil until it's measured).
@@ -426,12 +428,12 @@ struct PanelRoot: View {
                 })
             if board.showsColumns {
                 Divider()
-                CommandsColumn().frame(width: Self.boardWidth, height: height)
+                SkillsColumn().frame(width: Self.boardWidth, height: height)
                 Divider()
-                EntriesColumn().frame(width: Self.boardWidth, height: height)
-                if board.showsOptions {
+                ActivityColumn().frame(width: Self.boardWidth, height: height)
+                if board.showsDetail {
                     Divider()
-                    OptionsColumn().frame(width: Self.boardWidth, height: height)
+                    UseDetailColumn().frame(width: Self.boardWidth, height: height)
                 }
             }
         }

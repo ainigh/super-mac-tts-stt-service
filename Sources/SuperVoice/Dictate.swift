@@ -10,16 +10,19 @@ import VoiceCore
 /// microphone change (AirPods connecting) carries on.
 ///
 /// Dictating, `text` grows until it's stopped. With `pauseToEnd` set (always listening), a pause
-/// that long ends what was said: it goes to `onUtterance` and listening carries on fresh.
-/// On the main thread.
+/// that long ends what was said: it goes to `onUtterance` and listening carries on fresh. With
+/// `holdIfUnfinished` too, a pause after something that sounds unfinished ("…and the") waits that
+/// much longer, and talking again carries on the same utterance. On the main thread.
 final class Recorder: ObservableObject {
     static let shared = Recorder()
 
     let pauseToEnd: Double?
+    let holdIfUnfinished: Double?
     var onUtterance: ((String) -> Void)?
 
-    init(pauseToEnd: Double? = nil) {
+    init(pauseToEnd: Double? = nil, holdIfUnfinished: Double? = nil) {
         self.pauseToEnd = pauseToEnd
+        self.holdIfUnfinished = holdIfUnfinished
     }
 
     @Published private(set) var on = false
@@ -50,6 +53,8 @@ final class Recorder: ObservableObject {
     private var phraseNumber = 0
     private var guessing = false
     private var ticker: Timer?
+    /// What was said sounded unfinished: when it's sent anyway, if nothing more is said.
+    private var holdTimer: Timer?
     /// Asked to listen (start) and not since stopped: the microphone opens only if still wanted
     /// once permission comes back.
     private var wanted = false
@@ -74,11 +79,19 @@ final class Recorder: ObservableObject {
         closeMic()
         if let last = cutter.flush() { enqueue(last, send: pauseToEnd != nil) }
         cutter.reset()
+        // Held for more that won't come now: it goes as it is (or with the last phrase, once written).
+        if holdTimer != nil {
+            holdTimer?.invalidate()
+            holdTimer = nil
+            if !writing && waiting.isEmpty { sendDone() }
+        }
         finishing = writing || !waiting.isEmpty
     }
 
     /// Forgets what's been written down (and anything waiting).
     func clear() {
+        holdTimer?.invalidate()
+        holdTimer = nil
         generation += 1
         cutter.reset()
         waiting = []
@@ -211,13 +224,31 @@ final class Recorder: ObservableObject {
         if waiting.isEmpty { guess = "" }
         text = Self.join(done, guess)
         if send {
-            let all = done
-            done = ""
-            guess = ""
-            text = ""
-            if !all.isEmpty { onUtterance?(all) }
+            holdTimer?.invalidate()
+            holdTimer = nil
+            if let hold = holdIfUnfinished, on, TurnEnd.unfinished(done) {
+                // It sounds like more is coming: wait a little longer for it.
+                holdTimer = Timer.scheduledTimer(withTimeInterval: hold, repeats: false) { [weak self] _ in self?.release() }
+            } else {
+                sendDone()
+            }
         }
         writeNext()
+    }
+
+    /// The hold is over: sent, unless they're talking again (then the next pause decides).
+    private func release() {
+        holdTimer = nil
+        guard !cutter.spoke, !writing, waiting.isEmpty else { return }
+        sendDone()
+    }
+
+    private func sendDone() {
+        let all = done
+        done = ""
+        guess = ""
+        text = ""
+        if !all.isEmpty { onUtterance?(all) }
     }
 
     /// While a phrase is being said, writes down what's been said of it so far, to show it live.

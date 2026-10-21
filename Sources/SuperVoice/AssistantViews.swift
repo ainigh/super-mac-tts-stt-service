@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import VoiceCore
 
-/// AI Listen: start it, say "Micky" or "Ollama", talk; the chat as it goes, a box to type in
-/// instead, and where Ollama is.
+/// AI Listen: start it (or say "mouse", always listening) and talk; the chat as it goes, a box to
+/// type in instead, and where Ollama is.
 struct AssistantView: View {
     @EnvironmentObject var service: Service
     @ObservedObject var ai = AssistantModel.shared
@@ -15,7 +15,7 @@ struct AssistantView: View {
     @State private var showSettings = false
 
     var body: some View {
-        Page(title: "AI Listen", subtitle: "Say “\(Assistant.name)” or “Ollama”, then talk; the answer is read back",
+        Page(title: "AI Listen", subtitle: "Start it (or say “\(Assistant.wakeWords[0][0])”), then talk; the answer is read back",
              symbol: "sparkles", colors: [Palette.violet, Palette.pink]) {
             if let status = Neural.status(service.neural.ears, what: "speech recognition") {
                 Notice(text: status, tint: .blue, symbol: "arrow.down.circle")
@@ -57,7 +57,7 @@ struct AssistantView: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut("l", modifiers: .command)
-            .help(ai.on ? "Stop listening (the chat stays in the AI library)" : "Start listening for “\(Assistant.name)” (a new chat)")
+            .help(ai.on ? "Stop listening (the chat stays in the AI library)" : "Start talking (a new chat)")
             phaseLabel
             if ai.on, listener.on, !voice.speaking { LevelMeter(level: listener.level) }
             Spacer()
@@ -89,9 +89,6 @@ struct AssistantView: View {
             case .off:
                 Image(systemName: "moon.zzz").foregroundStyle(.secondary)
                 Text("Off").foregroundStyle(.secondary)
-            case .waiting:
-                Image(systemName: "ear").foregroundStyle(Palette.violet)
-                Text("Say “\(Assistant.name)”…")
             case .listening:
                 Image(systemName: "ear.fill").foregroundStyle(Palette.pink)
                     .symbolEffect(.pulse, isActive: true)
@@ -162,17 +159,18 @@ struct AssistantView: View {
     private var howTo: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("How it works").font(.system(size: 13, weight: .semibold))
-            HowToLine(symbol: "1.circle", text: "Press Start (or ⌘L). It listens for “\(Assistant.name)” or “Ollama”.")
-            HowToLine(symbol: "2.circle", text: "Say the word, then talk: “\(Assistant.name), what's a good name for a cat?” From then on everything you say goes to Ollama, and the answer is read back.")
-            HowToLine(symbol: "3.circle", text: "“Stop” stops it talking. “New chat” starts over. “Goodbye” turns it off, and so does \(AssistantModel.clock(ai.settings.idleSeconds)) with nothing said.")
-            HowToLine(symbol: "books.vertical", text: "Each chat is kept in the AI library. A new chat starts fresh, but ask about an earlier one (“what did we say about the budget last week?”) or about something you dictated, transcribed or noted, and it looks it up.")
+            HowToLine(symbol: "1.circle", text: "Press Start (or ⌘L), or click the panel's AI listen tile. With Listen on (the ear), just say “\(Assistant.wakeWords[0][0])”: “mouse, what's a good name for a cat?”")
+            HowToLine(symbol: "2.circle", text: "Then just talk: everything you say goes to Ollama, and the answer is read back. A pause mid-sentence doesn't cut you off, and you can talk over an answer to stop it.")
+            HowToLine(symbol: "3.circle", text: "“Stop” stops it talking. “New chat” starts over. “Goodbye” turns it off, and so does \(AssistantModel.clock(ai.settings.idleSeconds)) with nothing said; you hear a sound as it does.")
+            HowToLine(symbol: "books.vertical", text: "Each chat is kept in the AI library. A new chat starts fresh, but ask about an earlier one, or something in your library, and it looks it up; ask, and it adds notes or changes them.")
+            HowToLine(symbol: "safari", text: "Its skills (on the panel, beside it) let it search the web and read pages in your browser, find and read files, read the clipboard, check the Mac, and do sums.")
         }
         .padding(.bottom, 6)
     }
 
     private var typeBar: some View {
         HStack(spacing: 8) {
-            TextField("Type instead of talking (it wakes it, and starts it if it's off)", text: $typed)
+            TextField("Type instead of talking (it starts it if it's off)", text: $typed)
                 .textFieldStyle(.plain)
                 .onSubmit {
                     ai.type(typed)
@@ -222,13 +220,20 @@ struct AssistantView: View {
                 }
                 HStack(spacing: 8) {
                     Text("Off after").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
-                    ForEach([30.0, 60, 120, 300], id: \.self) { s in
+                    ForEach([60.0, 180, 300, 600], id: \.self) { s in
                         Button(AssistantModel.clock(s)) { ai.change { $0.idleSeconds = s } }
                             .buttonStyle(Chip(selected: abs(ai.settings.idleSeconds - s) < 0.5, tint: Palette.violet))
                     }
                     Text("with nothing said").font(.system(size: 11)).foregroundStyle(.secondary)
                     Spacer()
                     Toggle("Sounds", isOn: $ai.sounds).toggleStyle(.checkbox).font(.system(size: 11))
+                        .help("Little sounds as it starts and hears you (the sound as it turns off always plays)")
+                }
+                HStack(spacing: 8) {
+                    Text("Barge in").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+                    Toggle("Talk over an answer to stop it and be heard (best with headphones; off, it doesn't listen while it talks)",
+                           isOn: Binding(get: { ai.settings.bargeIn }, set: { v in ai.change { $0.bargeIn = v } }))
+                        .toggleStyle(.checkbox).font(.system(size: 11))
                 }
                 HStack(spacing: 8) {
                     Text("Scripts").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
@@ -277,6 +282,19 @@ struct AssistantView: View {
         case "check_flow": return "a flow check"
         case "list_runs", "read_run": return "the runs"
         case "stop_run": return "stopping a run"
+        case "add_note": return "adding a note"
+        case "update_library": return "changing the library"
+        case "web_search": return "a web search"
+        case "search_site": return "a site search"
+        case "open_page": return "a web page"
+        case "read_page": return "the page in your browser"
+        case "find_on_page": return "finding on the page"
+        case "find_files": return "Spotlight"
+        case "list_folder": return "a folder"
+        case "read_file": return "a file"
+        case "read_clipboard": return "the clipboard"
+        case "mac_status": return "the Mac"
+        case "calculate": return "the calculator"
         default: return tool
         }
     }

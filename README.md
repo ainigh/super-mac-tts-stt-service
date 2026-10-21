@@ -8,8 +8,13 @@ A menu bar app for the Mac that does speech, offline, and does it well:
 - **Transcribe**: drop audio or video files, get their text (and subtitles), kept with the rest.
 - **Library**: everything kept, in a grid: search, filter, star, open to edit, read it back, copy,
   save as .txt / .srt / .vtt, delete.
-- **AI listen**: talk with [Ollama](https://ollama.com) by voice: click the tile and talk, or say **"Micky"** (or "Ollama"),
-  then talk; the answer is read back. It turns off after a minute with nothing said.
+- **AI listen**: talk with [Ollama](https://ollama.com) by voice: click the tile and talk, or say **"mouse"**,
+  then talk; the answer is read back. Talk over it to stop it. It turns off after three minutes with
+  nothing said, with a sound as it does.
+- **Skills**: what the model can use besides talking, each switched on or off beside the panel:
+  your library (reading, and adding or changing notes when you ask), your default browser (search,
+  open pages, read and find text on them), files, the clipboard, the Mac's status, a calculator, and
+  your scripts.
 - **AI library**: every chat with it, by day. A new chat starts fresh, but ask about an earlier one,
   or about something you dictated, transcribed or noted, and it looks it up.
 - **API**: every app on the Mac can speak and listen through it, the way they use Ollama. Each
@@ -26,21 +31,49 @@ listen; everything else works without it.
 
 Click the panel's **AI listen** tile and just talk: no wake word, and no window to open (the chat
 works all the same; it shows in the **AI library**, and right-click the tile for its window and
-settings). Or, with **always listen** on, say **"Micky"** (or "Ollama"), then talk: "Micky, what's a
-good name for a cat?" starts it and asks. From then on everything you say goes to Ollama and the
-answer is read back in your voice, until a minute passes with nothing said (30 seconds to 5
-minutes, in its window), when it turns itself off. While it talks it isn't listening (so it doesn't
-hear itself); say the next thing when it's done, or click **Stop talking**.
+settings). Or, with **Listen** on (the ear), say **"mouse"**, then talk: "mouse, what's a good name
+for a cat?" starts it and asks. "Mouse" is the only thing always listening acts on. From then on
+everything you say goes to Ollama and the answer is read back, until three minutes pass with
+nothing said (one to ten minutes, in its window), when it plays its off sound (always, sounds on or
+off) and turns itself off. Saying "goodbye" plays it too.
 
+- **Pauses**: a pause ends what you said, unless it sounds unfinished ("…and the", "…because",
+  a trailing comma, no full stop): then it waits a moment longer for the rest. And if more comes
+  while the model is still working on the first half, the two are asked as one question.
+- **Barge in**: it keeps listening while it talks; talk over it and it stops and hears you. What
+  it hears of itself through the speakers is told apart from you (it's the answer's own words),
+  but headphones work best; turn **Barge in** off in its window and it stops listening while it
+  talks, as before.
 - **"Stop"** stops it talking. **"New chat"** starts over. **"Goodbye"** (or "that's all") turns it
   off. You can type instead of talking.
 - Each start is a **new chat**, kept in the **AI library** as it goes. The model sees only the chat
-  it's in, and is told the date and time (written out in full) with each message. It has tools to
-  list the earlier chats (by date) and read any of them, and to list and read the library's
-  dictations, transcripts and notes: ask ("what did we say about the budget last week?", "read me
-  yesterday's dictation") and it looks them up. Tool calls are hand-rolled (a line of JSON in the
-  model's answer, the result as the next message), not Ollama's tool calling, so any model can use
-  them.
+  it's in, and is told the date and time (written out in full) with each message. Tool calls are
+  hand-rolled (a line of JSON in the model's answer, the result as the next message), not Ollama's
+  tool calling, so any model can use them.
+
+### Skills
+
+The panel's columns while AI Listen is on (or pinned with the rectangles button): the skills,
+each with a switch (the model is told only about those on), what the model used, newest first
+(click one for all of it, to copy, open or hear), and the board's searches.
+
+- **Library**: list and read earlier chats, and the dictations, transcripts and notes ("what did we
+  say about the budget last week?", "read me yesterday's dictation").
+- **Library editing**: add notes, and change dictations, transcripts and notes (replace or add to
+  their text, rename, star) when you ask ("note: call Sam at four", "add eggs to my shopping
+  note"). Never chats, and nothing is deleted.
+- **Browser**: in your default browser, where you see it: web searches (Google, or set your own),
+  your sites (Wikipedia and YouTube to start with; add one as `name https://…{query}`), opening a
+  page, reading the page you have open, and finding text on it (highlighted, scrolled to). Safari
+  and the Chromium browsers (Chrome, Brave, Edge, Arc, Vivaldi, Opera) are read in place once
+  **Allow JavaScript from Apple Events** is on (Safari: Develop menu; Chrome: View > Developer),
+  and macOS asks once to let Super Voice control the browser. Any other browser (or that off), the
+  page still opens there and is read by fetching it.
+- **Files**: find files with Spotlight, list folders, read text, Markdown, code, CSV, JSON, PDF,
+  RTF and Word files. Only to look; hidden files and folders and `~/Library` (but iCloud Drive)
+  stay out, and so does anything outside your home folder, `/Applications` and `/Volumes`.
+- **Clipboard**, **This Mac** (the app in front, apps open, battery, disk, memory, macOS) and the
+  **Calculator** (sums worked out exactly, not guessed).
 - **Scripts**: with [Tool Mac Tool Run](https://github.com/ainigh/toolmactoolrun) running, it can
   list and run your scripts and flows ("run my backup script"): every run shows a card on the Mac
   and waits for you to click **Run**. Its address (`http://127.0.0.1:8768`) is in the window's
@@ -93,7 +126,7 @@ install line again works too.
 
 Click the waveform in the menu bar:
 
-- **Listen**: always listen (see below). **Start / Stop**: serving the API (the tools keep working
+- **Listen**: always listen for "mouse" (see below). The rectangles: show the skills. **Start / Stop**: serving the API (the tools keep working
   either way).
 - **Read aloud, Dictate, Transcribe, Library, AI listen, AI library**: the tools, each in its own
   window.
@@ -106,34 +139,13 @@ Click the waveform in the menu bar:
 - **Allow other devices**: listen on the network too; callers from elsewhere need the token shown.
 - **Update**, **Open at login**, **Quit**.
 
-## Always listen and the board
+## Always listen
 
-**Listen** (the ear, next to Start) keeps the microphone open. Say **"mouse"** to open the panel
-(it doesn't take the keyboard from the app you're in), then just talk: each thing you say, ended by
-a pause, goes in the board's note, one note kept in sections, each under a subtitle. "Mouse, note
-buy milk" in one go works too. "Mouse" again closes the panel, and so do 20 seconds with nothing
-happening. Nothing is taken while the panel is closed, and neither is what the Mac says itself or
-anything said while dictating. The panel grows to four columns while it's in use (the rectangles
-button shows the board without listening, so you can type into it):
-
-1. **The panel**, as before.
-2. **Voice commands**: the subtitles (`note` to start with; add more over time). Say one first
-   and what follows goes under it: "note, buy milk" adds "Buy milk" under `note`. Anything else
-   goes under `search`, word for word ("search, …" said first works too). Click one to see what's
-   under it.
-3. **The note**: what was just added, then, for a search, the note's sentences that match it (best
-   match first); for a command, what else is under that subtitle. The box on top takes typing
-   (Return adds it, the same as saying it).
-4. **Options** for what was just added: **Open** opens the note, scrolled to the best match with
-   its sentence picked out (to what was just added when nothing matches). A line that's only a link
-   opens in your browser instead, and `GET https://…` or `POST https://… {json}` is called and its
-   answer shown. **Copy** copies the best match, or what you said. **No** takes it back out of the
-   note. Click one, or just say it: "open", "copy", "no" (said alone, they're never added).
-
-Everything said is kept. The note is in the library too (a note called "Board"), where it can be
-read back, edited or saved as a file: `## note` starts the section under `note`, and each line
-under it is one thing said. Entries from before the board kept one note are folded into it once,
-under what they were filed under, and stay in the library as notes of their own.
+**Listen** (the ear, next to Start) keeps the microphone open for one word: **"mouse"**, which starts
+AI Listen (see above); "mouse, …" said in one go asks it straight away. Nothing else said is acted
+on or kept, and nothing is heard while dictating, while the Mac speaks itself, or while AI Listen
+has the microphone. (The board's voice commands and note from before are gone; the note stays in
+the library, as a note called "Board".)
 
 ## Working on it
 
@@ -144,7 +156,7 @@ scripts/build-app.sh       # on a Mac: build/SuperVoice.app and build/SuperVoice
 
 | | |
 |---|---|
-| `Sources/VoiceCore` | Foundation only: the HTTP API (`API.swift`), API.md embedded (`APIDoc.swift`, generated by `scripts/embed-api-doc.sh`), HTTP parsing, voices, WAV/PCM, multipart, long-audio transcription, the library store, access rules, the assistant (`Assistant.swift`: wake words, the Ollama client, hand-rolled tool calls, the tools over the library, the conversation; `ToolRun.swift`: Tool Mac Tool Run's client and the tools over it) |
-| `Sources/SuperVoice` | the Mac app: FluidAudio engine, Network.framework server, menu bar panel, the tools' windows, AI listen (`AssistantModel.swift`), updater |
+| `Sources/VoiceCore` | Foundation only: the HTTP API (`API.swift`), API.md embedded (`APIDoc.swift`, generated by `scripts/embed-api-doc.sh`), HTTP parsing, voices, WAV/PCM, multipart, long-audio transcription, the library store, access rules, the assistant (`Assistant.swift`: the wake word, the Ollama client, hand-rolled tool calls, the tools over the library, the conversation; `Skills.swift`: the skills, the browser, files and the calculator; `Listening.swift`: when a sentence is done, and telling its own voice from yours; `ToolRun.swift`: Tool Mac Tool Run's client and the tools over it) |
+| `Sources/SuperVoice` | the Mac app: FluidAudio engine, Network.framework server, menu bar panel, the tools' windows, AI listen (`AssistantModel.swift`), the skills board (`SkillsModel.swift`, `SkillsViews.swift`) and what they need from the Mac (`MacSkills.swift`), updater |
 | `Tests/VoiceCoreTests` | every endpoint against a fake engine, the parser, formats, the library, the assistant against a fake model |
 | `scripts/build-app.sh`, `.github/workflows/build.yml`, `install.sh` | building, releasing (pushes to `main`), installing |

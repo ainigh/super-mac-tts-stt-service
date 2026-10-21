@@ -144,7 +144,7 @@ final class ToolRunTests: XCTestCase {
         chat.runner = runner
         XCTAssertTrue(chat.systemPrompt().contains("- run_script:"))
         XCTAssertTrue(chat.systemPrompt().contains("Tool Mac Tool Run"))
-        XCTAssertEqual(chat.tools.map(\.name), AssistantTools.library.map(\.name) + ToolRunTools.names)
+        XCTAssertEqual(chat.tools.map(\.name), AssistantTools.library.map(\.name) + ["calculate"] + ToolRunTools.names)
         model.script = [#"{"tool": "run_script", "arguments": {"script": "hello.sh", "args": ["world"]}}"#, "It said hello to the world."]
         runner.script = [(200, ["name": "hello.sh", "state": "succeeded", "code": 0, "output": "Hello, world!\n"])]
         let answer = try await chat.ask("Run hello with world")

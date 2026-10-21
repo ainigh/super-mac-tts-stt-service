@@ -9,11 +9,15 @@ struct AssistantSettings: Codable, Equatable {
     var ollamaURL = OllamaClient.defaultURL
     /// Ollama's name for it ("llama3.2:latest"); empty: the first one Ollama has.
     var model = ""
-    var idleSeconds: Double = 60
+    var idleSeconds: Double = 180
     /// Tool Mac Tool Run, which runs the user's scripts for the model; empty: not offered.
     var toolRunURL = ToolRunClient.defaultURL
     /// Let the model think before answering (slower). Off: turned off as far as it goes.
     var thinking = false
+    /// Talking over the answer stops it and is heard (barge in); off, it doesn't listen while it talks.
+    var bargeIn = true
+    /// 2: the turn-off went from a minute to three by default.
+    var version = 2
 
     init() {}
 
@@ -26,22 +30,25 @@ struct AssistantSettings: Codable, Equatable {
         idleSeconds = try c.decodeIfPresent(Double.self, forKey: .idleSeconds) ?? d.idleSeconds
         toolRunURL = try c.decodeIfPresent(String.self, forKey: .toolRunURL) ?? d.toolRunURL
         thinking = try c.decodeIfPresent(Bool.self, forKey: .thinking) ?? d.thinking
+        bargeIn = try c.decodeIfPresent(Bool.self, forKey: .bargeIn) ?? d.bargeIn
+        // Saved when a minute was the default: it's three now.
+        if (try c.decodeIfPresent(Int.self, forKey: .version) ?? 1) < 2, idleSeconds == 60 { idleSeconds = d.idleSeconds }
     }
 }
 
-/// AI Listen: a conversation with Ollama by voice. Started, it listens for "Micky" or "Ollama";
-/// from then on everything said goes to the model and the answer is read back, until a minute (by
-/// default) passes with nothing said, when it turns itself off. Each start is a new chat, kept in
-/// the AI library as it goes; the model sees only this chat, and looks earlier ones (and the
-/// library) up with its tools when asked. On the main thread.
+/// AI Listen: a conversation with Ollama by voice. With always listen on, it hears only "mouse",
+/// which starts it ("mouse, what's…" asks straight away); clicking the panel's tile starts it too.
+/// On, everything said goes to the model and the answer is read back, until three minutes (by
+/// default) pass with nothing said, when it plays its off sound and turns itself off. Talking over
+/// the answer stops it (barge in). Each start is a new chat, kept in the AI library as it goes; the
+/// model sees only this chat, and uses its skills (the library, the browser, files, …) when asked.
+/// On the main thread.
 final class AssistantModel: ObservableObject {
     static let shared = AssistantModel()
 
     enum Phase: Equatable {
         case off
-        /// Listening for the wake word.
-        case waiting
-        /// Awake: listening for the next thing to say to the model.
+        /// Listening for the next thing to say to the model.
         case listening
         /// Waiting for the model.
         case thinking
@@ -50,10 +57,13 @@ final class AssistantModel: ObservableObject {
     }
 
     @Published private(set) var on = false
-    @Published private(set) var awake = false
+    /// While it's off, listening for "mouse" (and wanted so across launches).
+    @Published private(set) var alwaysListen: Bool
     @Published private(set) var thinking = false
     /// What the listener is hearing right now, before the pause that ends it.
     @Published private(set) var hearing = ""
+    /// What the always-listener is hearing (only "mouse" is acted on).
+    @Published private(set) var wakeHearing = ""
     /// This chat, as it stands (a question shows as soon as it's asked).
     @Published private(set) var turns: [ChatTurn] = []
     /// A line saying what just happened.
@@ -70,12 +80,16 @@ final class AssistantModel: ObservableObject {
     @Published private(set) var thinkingAdvice: (text: String, command: String?)?
     /// Ollama's version, once asked.
     private var ollamaVersion: String?
-    /// Little sounds when it wakes and hears.
+    /// Little sounds when it wakes and hears (the off sound always plays).
     @Published var sounds: Bool { didSet { UserDefaults.standard.set(sounds, forKey: "assistantSounds") } }
 
     /// Its own voice, so stopping it stops nothing else.
     let voice = SpeechPlayer()
-    let listener = Recorder(pauseToEnd: 1.2)
+    let listener = Recorder(pauseToEnd: 1.2, holdIfUnfinished: TurnEnd.hold)
+    /// Always listen: hears "mouse" while it's off.
+    let wakeListener = Recorder(pauseToEnd: 1.0, holdIfUnfinished: TurnEnd.hold)
+    /// The sound it makes as it turns off.
+    static let offSound = "Submarine"
 
     private var chat: Conversation?
     /// The chat as it was before the question now running: what a stop goes back to, since the
@@ -84,6 +98,8 @@ final class AssistantModel: ObservableObject {
     private var client: OllamaClient
     /// Tool Mac Tool Run, when its address is set.
     private var runner: ToolRunClient?
+    /// The skills that need the Mac.
+    private var skills: SkillRunner
     private var lastActivity = Date()
     private var idleTimer: Timer?
     private var watching: Set<AnyCancellable> = []
@@ -91,6 +107,14 @@ final class AssistantModel: ObservableObject {
     private var generation = 0
     /// Said while the model was still answering the last thing: asked next.
     private var pending: [String] = []
+    /// The question running, and when it was asked: more said soon after, before the answer, is
+    /// the rest of it (a pause mid-sentence sent it), so the two are asked as one.
+    private var asking: (text: String, at: Date)?
+    /// The model changed the library while answering the question running (it isn't asked again).
+    private var changedLibrary = false
+    /// What the voice is reading, and until when what's heard may still be it coming back.
+    private var reading = ""
+    private var echoUntil = Date.distantPast
     private var noticeClear: DispatchWorkItem?
 
     private init() {
@@ -100,50 +124,54 @@ final class AssistantModel: ObservableObject {
             loaded = saved
         }
         settings = loaded
+        alwaysListen = defaults.bool(forKey: "alwaysListen")
         sounds = defaults.object(forKey: "assistantSounds") as? Bool ?? true
         client = OllamaClient(baseURL: loaded.ollamaURL)
         client.thinking = loaded.thinking
         runner = Self.runner(for: loaded)
+        let board = SkillsModel.shared
+        skills = SkillRunner(host: MacSkills.shared, sites: board.sites, searchTemplate: board.searchTemplate)
         listener.onUtterance = { [weak self] said in self?.heard(said) }
+        wakeListener.onUtterance = { [weak self] said in self?.wakeHeard(said) }
         listener.$text.receive(on: DispatchQueue.main).sink { [weak self] t in
-            self?.hearing = t
-            if !t.isEmpty { self?.activity() }
+            guard let self else { return }
+            self.hearing = t
+            if !t.isEmpty { self.activity() }
+            self.bargeIn(t)
         }.store(in: &watching)
-        listener.$problem.receive(on: DispatchQueue.main).sink { [weak self] p in
-            if let p { self?.problem = p }
-        }.store(in: &watching)
+        wakeListener.$text.receive(on: DispatchQueue.main).sink { [weak self] t in self?.wakeHearing = t }.store(in: &watching)
+        for recorder in [listener, wakeListener] {
+            recorder.$problem.receive(on: DispatchQueue.main).sink { [weak self] p in
+                if let p { self?.problem = p }
+            }.store(in: &watching)
+        }
         voice.$problem.receive(on: DispatchQueue.main).sink { [weak self] p in
             if let p { self?.problem = p }
         }.store(in: &watching)
         // The phase shows the voice's state too.
         voice.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &watching)
         voice.onDone = { [weak self] in self?.spoke() }
-        // Dictating takes the microphone, and what the Mac says itself (its own answers included)
-        // isn't to be heard: it waits meanwhile, dropping what it half heard, then carries on.
+        // Dictating takes the microphone, and what the Mac says itself isn't to be heard: the
+        // listeners wait meanwhile, dropping what they half heard, then carry on. Its own voice
+        // is listened over (barge in), unless that's off.
         let service = Service.shared
-        Recorder.shared.$on.removeDuplicates()
-            .combineLatest(service.reader.$speaking.removeDuplicates(), service.speaker.$speaking.removeDuplicates(),
-                           voice.$speaking.removeDuplicates())
-            .map { $0 || $1 || $2 || $3 }
-            .removeDuplicates()
-            .dropFirst()
+        Publishers.Merge4(Recorder.shared.$on.map { _ in () }, service.reader.$speaking.map { _ in () },
+                          service.speaker.$speaking.map { _ in () }, voice.$speaking.map { _ in () })
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] busy in
-                guard let self, self.on else { return }
-                if busy {
-                    self.listener.stop()
-                    self.listener.clear()
-                } else {
-                    self.resume()
-                }
-            }.store(in: &watching)
+            .sink { [weak self] in self?.refreshListening() }
+            .store(in: &watching)
+    }
+
+    /// At launch: listen for "mouse" if it was.
+    func launch() {
+        refreshListening()
     }
 
     var phase: Phase {
         if !on { return .off }
         if voice.speaking { return .speaking }
         if thinking { return .thinking }
-        return awake ? .listening : .waiting
+        return .listening
     }
 
     /// The model it's talking to, as shown.
@@ -151,42 +179,38 @@ final class AssistantModel: ObservableObject {
 
     // MARK: On and off
 
-    /// Starts listening (a new chat). `awake`: no wake word needed, just talk; `question`: asked
-    /// right away. Neither opens the window: it works all the same without it.
-    func start(awake wakeNow: Bool = false, question: String? = nil) {
+    /// Starts talking (a new chat): just talk. `question`: asked right away. It doesn't open the
+    /// window: it works all the same without it.
+    func start(question: String? = nil) {
         if on {
-            if wakeNow, !awake { wake() }
             if let question { ask(question) }
             return
         }
         on = true
-        awake = wakeNow
         problem = nil
         newChat(say: false)
         activity()
         idleTimer?.invalidate()
         idleTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.checkIdle() }
-        resume()
+        refreshListening()
         refreshModels()
-        if wakeNow {
-            play("Pop")
-            say("Listening: just talk")
-        } else {
-            say("Say “\(Assistant.name)” or “Ollama”, then talk")
-        }
+        play("Pop")
+        say("Listening: just talk")
         if let question { ask(question) }
     }
 
-    /// Stops: the microphone closes and the voice stops. The chat stays in the AI library.
+    /// Stops, with its off sound first: the microphone closes and the voice stops. The chat stays
+    /// in the AI library. Always listen carries on listening for "mouse".
     func stop(reason: String? = nil) {
         guard on else { return }
+        NSSound(named: NSSound.Name(Self.offSound))?.play()
         on = false
-        awake = false
         generation += 1
         if thinking, let settled { chat = settled }
         settled = nil
         thinking = false
         pending = []
+        asking = nil
         listener.stop()
         listener.clear()
         voice.stop()
@@ -195,54 +219,84 @@ final class AssistantModel: ObservableObject {
         idleLeft = nil
         hearing = ""
         if let reason { say(reason) }
+        refreshListening()
     }
 
     func toggle() {
         on ? stop(reason: "Turned off") : start()
     }
 
-    /// The panel's tile: talk with Ollama now, no wake word; again to stop.
-    func toggleTalking() {
-        on ? stop(reason: "Turned off") : start(awake: true)
+    /// Always listen for "mouse" (the ear on the panel).
+    func setAlwaysListen(_ want: Bool) {
+        alwaysListen = want
+        UserDefaults.standard.set(want, forKey: "alwaysListen")
+        refreshListening()
     }
 
-    /// Listens, unless dictation or a voice has the floor.
-    private func resume() {
+    private var micBusy: Bool {
         let service = Service.shared
-        guard on, !Recorder.shared.on, !service.reader.speaking, !service.speaker.speaking, !voice.speaking else { return }
-        listener.start()
+        return Recorder.shared.on || service.reader.speaking || service.speaker.speaking
     }
 
-    private var othersBusy: Bool {
-        let service = Service.shared
-        return Recorder.shared.on || service.reader.speaking || service.speaker.speaking || voice.speaking
+    /// Each listener on or off, as things are: AI Listen's while it's on (but not over dictation,
+    /// the Mac's other voices, or its own when barge in is off), the wake listener while it's off.
+    private func refreshListening() {
+        let talk = on && !micBusy && !(voice.speaking && !settings.bargeIn)
+        if talk {
+            listener.start()
+        } else if listener.on {
+            listener.stop()
+            listener.clear()
+        }
+        if alwaysListen && !on && !micBusy {
+            wakeListener.start()
+        } else if wakeListener.on {
+            wakeListener.stop()
+            wakeListener.clear()
+            wakeHearing = ""
+        }
     }
 
     // MARK: Hearing
 
+    /// Always listening, while off: only "mouse" counts, alone or first.
+    private func wakeHeard(_ utterance: String) {
+        guard !on, alwaysListen, !micBusy else { return }
+        switch Assistant.hear(utterance, awake: false) {
+        case .wake, .command(.newChat): start()
+        case .wakeThen(let question): start(question: question)
+        default: break
+        }
+    }
+
     func heard(_ utterance: String) {
-        guard on, !othersBusy else { return }
-        switch Assistant.hear(utterance, awake: awake) {
+        guard on, !micBusy else { return }
+        var said = utterance
+        if settings.bargeIn, voice.speaking || Date() < echoUntil {
+            // While it reads (or just after), what's heard may be the answer coming back.
+            guard let mine = Echo.interruption(utterance, reading: reading) else { return }
+            if voice.speaking { voice.stop() }
+            said = mine
+        }
+        switch Assistant.hear(said, awake: true) {
         case .wake:
             activity()
-            wake()
-        case .wakeThen(let question):
+            play("Pop")
+            say("Listening")
+        case .wakeThen(let question), .speech(let question):
             activity()
-            if !awake { wake() }
             ask(question)
         case .command(let command):
             activity()
             run(command)
-        case .speech(let text):
-            guard awake else { return }
-            activity()
-            ask(text)
         }
     }
 
-    private func wake() {
-        awake = true
-        play("Pop")
+    /// Talked over the answer: it stops reading, so the rest is heard.
+    private func bargeIn(_ live: String) {
+        guard on, settings.bargeIn, voice.speaking, !live.isEmpty, Echo.interruption(live, reading: reading) != nil else { return }
+        voice.stop()
+        echoUntil = Date().addingTimeInterval(2)
         say("Listening")
     }
 
@@ -254,6 +308,7 @@ final class AssistantModel: ObservableObject {
                 generation += 1
                 thinking = false
                 pending = []
+                asking = nil
                 if let settled { chat = settled }
                 settled = nil
                 turns = chat?.turns ?? []
@@ -263,17 +318,16 @@ final class AssistantModel: ObservableObject {
             newChat(say: true)
         case .off:
             stop(reason: "Turned off")
-            voice.say("Bye.", voice: Service.shared.voice, speed: Service.shared.settings.speed)
+            talk("Bye.")
         }
     }
 
-    /// Typed in the window: the same as saying it (and it wakes it, or starts it).
+    /// Typed in the window: the same as saying it (and it starts it, if it's off).
     func type(_ text: String) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
         if !on { start() }
         activity()
-        if !awake { awake = true }
         ask(t)
     }
 
@@ -284,27 +338,64 @@ final class AssistantModel: ObservableObject {
         generation += 1
         thinking = false
         pending = []
-        chat = Conversation(llm: client, model: settings.model, library: { [] })
-        chat?.runner = runner
-        chat?.quick = !settings.thinking
+        asking = nil
+        let c = Conversation(llm: client, model: settings.model, library: { [] })
+        configure(c)
+        chat = c
         turns = []
         lastToolCalls = []
         if announce {
             say("New chat")
-            if on { voice.say("Okay, a new chat.", voice: Service.shared.voice, speed: Service.shared.settings.speed) }
+            if on { talk("Okay, a new chat.") }
         }
+    }
+
+    /// What the chat may use: the skills that are on, scripts, editing the library.
+    private func configure(_ c: Conversation) {
+        let board = SkillsModel.shared
+        skills.sites = board.sites
+        skills.searchTemplate = board.searchTemplate
+        c.runner = runner
+        c.skills = skills
+        c.enabled = board.enabled
+        c.quick = !settings.thinking
+        c.save = { [weak self] record in
+            DispatchQueue.main.async {
+                Library.shared.save(record)
+                self?.changedLibrary = true
+            }
+        }
+        c.onToolUse = { use in DispatchQueue.main.async { SkillsModel.shared.record(use) } }
+    }
+
+    /// The skills changed on the board: the chat (and the one to go back to) uses them from now on.
+    func skillsChanged() {
+        if let chat { configure(chat) }
+        if let settled { configure(settled) }
     }
 
     private func ask(_ question: String) {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
         if thinking {
+            if let a = asking, Date().timeIntervalSince(a.at) < 20, !changedLibrary, let settled {
+                // The rest of what's being asked: ask it whole instead.
+                generation += 1
+                thinking = false
+                chat = settled
+                self.settled = nil
+                asking = nil
+                ask(a.text + " " + q)
+                return
+            }
             pending.append(q)
             return
         }
         guard let chat else { return }
         voice.stop()
         thinking = true
+        changedLibrary = false
+        asking = (q, Date())
         settled = chat.copy()
         turns = chat.turns + [ChatTurn(role: .user, text: q)]
         play("Tink")
@@ -325,6 +416,7 @@ final class AssistantModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self, mine == self.generation else { return }
                 self.thinking = false
+                self.asking = nil
                 self.turns = chat.turns
                 self.lastToolCalls = chat.toolCalls
                 self.activity()
@@ -358,11 +450,18 @@ final class AssistantModel: ObservableObject {
             spoke()
             return
         }
-        voice.say(spoken, voice: Service.shared.voice, speed: Service.shared.settings.speed)
+        talk(spoken)
     }
 
-    /// Done reading: the minute starts again, and anything said meanwhile is asked.
+    /// Says `text` in its voice (what's heard meanwhile is checked against it).
+    private func talk(_ text: String) {
+        reading = text
+        voice.say(text, voice: Service.shared.voice, speed: Service.shared.settings.speed)
+    }
+
+    /// Done reading: the countdown starts again, and anything said meanwhile is asked.
     private func spoke() {
+        echoUntil = Date().addingTimeInterval(1.5)
         guard on else { return }
         activity()
         if !pending.isEmpty { ask(pending.removeFirst()) }
@@ -396,6 +495,7 @@ final class AssistantModel: ObservableObject {
         chat?.quick = !s.thinking
         client.thinking = s.thinking
         adviseOnThinking()
+        refreshListening()
         if newModel, on { warmUp() }
     }
 
