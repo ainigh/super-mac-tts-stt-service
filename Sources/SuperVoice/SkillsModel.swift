@@ -36,7 +36,14 @@ final class SkillsModel: ObservableObject {
 
     private init() {
         let saved = UserDefaults.standard
-        enabled = Set(saved.stringArray(forKey: "skillsOn") ?? Skills.ids)
+        var on = Set(saved.stringArray(forKey: "skillsOn") ?? Skills.ids)
+        // Jerry came after the skills were first saved: he's on once, until switched off.
+        if !saved.bool(forKey: "skillTeamAdded") {
+            on.insert(Skills.team.id)
+            saved.set(true, forKey: "skillTeamAdded")
+            saved.set(Array(on).sorted(), forKey: "skillsOn")
+        }
+        enabled = on
         if let data = saved.data(forKey: "skillSites"), let s = try? JSONDecoder().decode([Site].self, from: data) {
             sites = s
         } else {
