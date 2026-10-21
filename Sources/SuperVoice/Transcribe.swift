@@ -87,6 +87,7 @@ final class Transcriber: ObservableObject {
 
     private func failed(_ message: String?) {
         problem = message ?? "Stopped"
+        finished = nil                          // not the one before it, under "Stopped"
         current = nil
         task = nil
         next()

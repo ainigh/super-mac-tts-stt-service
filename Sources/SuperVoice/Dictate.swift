@@ -294,14 +294,13 @@ struct DictateView: View {
                 }
             }
             recordBar
-            TextEditor(text: Binding(get: { recorder.on || recorder.finishing ? recorder.text : draft },
-                                     set: { if !(recorder.on || recorder.finishing) { draft = $0 } }))
+            TextEditor(text: Binding(get: { shown }, set: { if !busy { draft = $0 } }))
                 .font(.system(size: 15))
                 .scrollContentBackground(.hidden)
                 .padding(10)
                 .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(alignment: .topLeading) {
-                    if draft.isEmpty && recorder.text.isEmpty {
+                    if shown.isEmpty {
                         Text(recorder.on ? "Listening…" : "Press Record and start talking.")
                             .foregroundStyle(.tertiary).padding(16).allowsHitTesting(false)
                     }
@@ -328,7 +327,8 @@ struct DictateView: View {
                 .disabled(busy || draft.isEmpty)
                 Spacer()
                 if let note { Text(note).font(.system(size: 11)).foregroundStyle(.secondary) }
-                Text("\(draft.split(whereSeparator: \.isWhitespace).count) words").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text("\(shown.split(whereSeparator: \.isWhitespace).count) words").font(.system(size: 11)).foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
         }
         .onChange(of: recorder.finishing) { _, finishing in
@@ -340,6 +340,11 @@ struct DictateView: View {
     }
 
     private var busy: Bool { recorder.on || recorder.finishing }
+
+    /// What the box shows: the draft, and while recording, what's being said after it.
+    private var shown: String {
+        busy ? Recorder.join(draft.trimmingCharacters(in: .whitespacesAndNewlines), recorder.text) : draft
+    }
 
     private var recordBar: some View {
         HStack(spacing: 12) {
