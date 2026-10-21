@@ -11,6 +11,8 @@ struct PanelView: View {
     /// Watched, so the counts on the tiles change while the panel's open.
     @ObservedObject var library = Library.shared
     var close: () -> Void
+    /// What was just copied ("url", "docs", "token"), shown as a check for a moment.
+    @State private var copied: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -157,16 +159,16 @@ struct PanelView: View {
                 SectionTitle("Endpoints")
                 Spacer()
                 Button {
-                    service.copy(service.baseURL)
+                    copy(service.baseURL, as: "url")
                 } label: {
-                    Label("Copy URL", systemImage: "doc.on.doc").font(.system(size: 11))
+                    Label(copied == "url" ? "Copied" : "Copy URL", systemImage: copied == "url" ? "checkmark" : "doc.on.doc").font(.system(size: 11))
                 }
                 .buttonStyle(.borderless)
                 .help("Copy \(service.baseURL)")
                 Button {
-                    service.copy(APIDoc.markdown(port: service.settings.port))
+                    copy(APIDoc.markdown(port: service.settings.port), as: "docs")
                 } label: {
-                    Label("Copy API docs", systemImage: "doc.text").font(.system(size: 11))
+                    Label(copied == "docs" ? "Copied" : "Copy API docs", systemImage: copied == "docs" ? "checkmark" : "doc.text").font(.system(size: 11))
                 }
                 .buttonStyle(.borderless)
                 .help("Copy the whole API documentation (API.md), to hand to another app or an assistant writing a client")
@@ -216,13 +218,19 @@ struct PanelView: View {
                     Text("Token").font(.system(size: 11)).foregroundStyle(.secondary)
                     Text(service.settings.token).font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
                     Spacer()
-                    Button { service.copy(service.settings.token) } label: { Image(systemName: "doc.on.doc") }
+                    Button { copy(service.settings.token, as: "token") } label: { Image(systemName: copied == "token" ? "checkmark" : "doc.on.doc") }
                         .buttonStyle(.borderless).help("Copy the token")
                     Button { service.change { $0.token = ServiceSettings.newToken() } } label: { Image(systemName: "arrow.clockwise") }
                         .buttonStyle(.borderless).help("Make a new token (the old one stops working)")
                 }
             }
         }
+    }
+
+    private func copy(_ text: String, as what: String) {
+        service.copy(text)
+        copied = what
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { if copied == what { copied = nil } }
     }
 
     // MARK: Footer
