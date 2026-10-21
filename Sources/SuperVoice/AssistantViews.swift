@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import VoiceCore
 
-/// AI Listen: start it (or say "mouse", always listening) and talk; the chat as it goes, a box to
+/// AI Listen: start it (or say "Tom", always listening) and talk; the chat as it goes, a box to
 /// type in instead, and where Ollama is.
 struct AssistantView: View {
     @EnvironmentObject var service: Service
@@ -15,7 +15,7 @@ struct AssistantView: View {
     @State private var showSettings = false
 
     var body: some View {
-        Page(title: "AI Listen", subtitle: "Start it (or say “\(Assistant.wakeWords[0][0])”), then talk; the answer is read back",
+        Page(title: "AI Listen", subtitle: "Start it (or say “\(Assistant.name)”), then talk; the answer is read back",
              symbol: "sparkles", colors: [Palette.violet, Palette.pink]) {
             if let status = Neural.status(service.neural.ears, what: "speech recognition") {
                 Notice(text: status, tint: .blue, symbol: "arrow.down.circle")
@@ -159,7 +159,7 @@ struct AssistantView: View {
     private var howTo: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("How it works").font(.system(size: 13, weight: .semibold))
-            HowToLine(symbol: "1.circle", text: "Press Start (or ⌘L), or click the panel's AI listen tile. With Listen on (the ear), just say “\(Assistant.wakeWords[0][0])”: “mouse, what's a good name for a cat?”")
+            HowToLine(symbol: "1.circle", text: "Press Start (or ⌘L), or click the panel's AI listen tile. With Listen on (the ear), just say “\(Assistant.name)”: “Tom, what's a good name for a cat?”")
             HowToLine(symbol: "2.circle", text: "Then just talk: everything you say goes to Ollama, and the answer is read back. A pause mid-sentence doesn't cut you off, and you can talk over an answer to stop it.")
             HowToLine(symbol: "3.circle", text: "“Stop” stops it talking. “New chat” starts over. “Goodbye” turns it off, and so does \(AssistantModel.clock(ai.settings.idleSeconds)) with nothing said; you hear a sound as it does.")
             HowToLine(symbol: "books.vertical", text: "Each chat is kept in the AI library. A new chat starts fresh, but ask about an earlier one, or something in your library, and it looks it up; ask, and it adds notes or changes them.")
@@ -235,9 +235,15 @@ struct AssistantView: View {
                            isOn: Binding(get: { ai.settings.bargeIn }, set: { v in ai.change { $0.bargeIn = v } }))
                         .toggleStyle(.checkbox).font(.system(size: 11))
                 }
-                Text(AssistantModel.echo.cancelsEcho
-                     ? "Echo cancellation is on: its own voice is taken out of what the microphone hears. Say “stop”, “wait” or “mouse”, or just talk, to cut in."
-                     : "Echo cancellation isn't available with this microphone or speakers, so only “stop”, “wait” or “mouse” said first cut in. Headphones help.")
+                HStack(spacing: 8) {
+                    Text("Echo").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+                    Toggle("Echo cancellation: its own voice is taken out of what the microphone hears (turn off if it stops hearing you; from the next start)",
+                           isOn: Binding(get: { ai.settings.echoCancel }, set: { v in ai.change { $0.echoCancel = v } }))
+                        .toggleStyle(.checkbox).font(.system(size: 11))
+                }
+                Text(!ai.settings.echoCancel ? "Echo cancellation is off: only “stop”, “wait” or “Tom” said first cut in. Headphones help."
+                     : AssistantModel.echo.failed ? "Echo cancellation gave the microphone only silence here, so it's off until the app starts again: only “stop”, “wait” or “Tom” said first cut in."
+                     : "Say “stop”, “wait” or “Tom”, or just talk, to cut in.")
                     .font(.system(size: 11)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     Text("Scripts").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
