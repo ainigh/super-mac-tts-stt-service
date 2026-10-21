@@ -41,7 +41,8 @@ public final class ToolRunClient: ScriptRunner {
 
     public func call(_ method: String, _ path: String, body: [String: Any]?) async throws -> (status: Int, json: [String: Any]) {
         let long = path == "/api/run" || path == "/api/compose"
-        var req = URLRequest(url: URL(string: baseURL.absoluteString + path)!, timeoutInterval: long ? runTimeout : timeout)
+        guard let url = URL(string: baseURL.absoluteString + path) else { throw ToolRunError.unreachable(baseURL.absoluteString + path) }
+        var req = URLRequest(url: url, timeoutInterval: long ? runTimeout : timeout)
         req.httpMethod = method
         req.setValue(client, forHTTPHeaderField: "X-Client")
         if var body {
@@ -146,7 +147,7 @@ public enum ToolRunTools {
                 if let trouble = trouble(status, json) { return trouble }
                 return mistake(json)
             case "list_runs":
-                let limit = min(max((arguments["limit"] as? Int) ?? Int((arguments["limit"] as? Double) ?? 10), 1), 100)
+                let limit = AssistantTools.limit(arguments, default: 10)
                 let (status, json) = try await runner.call("GET", "/api/runs?limit=\(limit)", body: nil)
                 if let trouble = trouble(status, json) { return trouble }
                 let runs = (json["runs"] as? [[String: Any]]) ?? []
@@ -160,12 +161,12 @@ public enum ToolRunTools {
                 })
             case "read_run":
                 guard let id = string(arguments["id"] ?? arguments["run"]) else { return "Give the run's id." }
-                let (status, json) = try await runner.call("GET", "/api/runs/\(id)", body: nil)
+                let (status, json) = try await runner.call("GET", "/api/runs/\(ToolRunTools.escaped(id))", body: nil)
                 if let trouble = trouble(status, json) { return trouble }
                 return outcome(json)
             case "stop_run":
                 guard let id = string(arguments["id"] ?? arguments["run"]) else { return "Give the run's id." }
-                let (status, json) = try await runner.call("POST", "/api/runs/\(id)/stop", body: [:])
+                let (status, json) = try await runner.call("POST", "/api/runs/\(ToolRunTools.escaped(id))/stop", body: [:])
                 if let trouble = trouble(status, json) { return trouble }
                 return json["stopping"] as? Bool == true ? "Stopping it." : "It had already ended."
             default:
@@ -182,7 +183,7 @@ public enum ToolRunTools {
         let name = (r["name"] as? String) ?? "the run"
         let state = (r["state"] as? String) ?? "unknown"
         var head = "\(name): \(state)"
-        if let code = number(r["code"]) { head += " (exit code \(Int(code)))" }
+        if let code = number(r["code"]), let c = Int(exactly: code.rounded()) { head += " (exit code \(c))" }
         if let s = number(r["seconds"]) { head += ", \(JSON.round(s)) seconds" }
         if let id = r["id"] as? String { head += ", run id \(id)" }
         var lines = [head + "."]
@@ -221,6 +222,11 @@ public enum ToolRunTools {
         case "flow_mistake": return mistake(json)
         default: return "Tool Mac Tool Run said \(status): \(error)"
         }
+    }
+
+    /// A run id the model wrote, as one path segment.
+    static func escaped(_ id: String) -> String {
+        id.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_"))) ?? ""
     }
 
     static func number(_ v: Any?) -> Double? {

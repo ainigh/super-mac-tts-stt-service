@@ -59,6 +59,9 @@ final class AssistantModel: ObservableObject {
     let listener = Recorder(pauseToEnd: 1.2)
 
     private var chat: Conversation?
+    /// The chat as it was before the question now running: what a stop goes back to, since the
+    /// question's task can't be stopped and keeps its own chat.
+    private var settled: Conversation?
     private var client: OllamaClient
     /// Tool Mac Tool Run, when its address is set.
     private var runner: ToolRunClient?
@@ -160,6 +163,8 @@ final class AssistantModel: ObservableObject {
         on = false
         awake = false
         generation += 1
+        if thinking, let settled { chat = settled }
+        settled = nil
         thinking = false
         pending = []
         listener.stop()
@@ -229,6 +234,8 @@ final class AssistantModel: ObservableObject {
                 generation += 1
                 thinking = false
                 pending = []
+                if let settled { chat = settled }
+                settled = nil
                 turns = chat?.turns ?? []
             }
             say("Stopped")
@@ -277,6 +284,7 @@ final class AssistantModel: ObservableObject {
         guard let chat else { return }
         voice.stop()
         thinking = true
+        settled = chat.copy()
         turns = chat.turns + [ChatTurn(role: .user, text: q)]
         play("Tink")
         // The library as it is now, for the tools (read off the main thread while the model thinks).

@@ -51,6 +51,12 @@ final class HTTPParserTests: XCTestCase {
         XCTAssertEqual(String(decoding: try result!.body.data(), as: UTF8.self), "hello world")
     }
 
+    func testAHugeChunkIsTooLargeNotACrash() {
+        var p = HTTPParser()
+        let raw = "POST /x HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n7fffffffffffffff\r\n"
+        XCTAssertThrowsError(try p.feed(Data(raw.utf8))) { XCTAssertEqual(($0 as? HTTPError)?.status, 413) }
+    }
+
     func testABigBodyGoesToAFileThatsRemovedAfter() throws {
         var p = HTTPParser()
         p.memoryLimit = 10
