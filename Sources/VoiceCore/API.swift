@@ -124,7 +124,7 @@ public final class VoiceAPI {
     private func tts(_ req: HTTPRequest, _ s: ServiceSettings) async throws -> HTTPResponse {
         let fields = try textFields(req)
         let text = try textField(fields["text"])
-        guard let voice = Voice.resolve(fields["voice"] as? String, default: s.defaultVoice) else {
+        guard let voice = Voice.resolve(Self.voiceName(fields["voice"]), default: s.defaultVoice) else {
             throw HTTPError(status: 400, code: "unknown_voice",
                             message: "no voice named \(fields["voice"] ?? ""); the voices: \(Voice.all.map(\.name).joined(separator: ", ")) (or f1-f3, m1-m3)")
         }
@@ -173,7 +173,7 @@ public final class VoiceAPI {
     private func say(_ req: HTTPRequest, _ s: ServiceSettings) throws -> HTTPResponse {
         let fields = try textFields(req)
         let text = try textField(fields["text"])
-        guard let voice = Voice.resolve(fields["voice"] as? String, default: s.defaultVoice) else {
+        guard let voice = Voice.resolve(Self.voiceName(fields["voice"]), default: s.defaultVoice) else {
             throw HTTPError(status: 400, code: "unknown_voice", message: "no voice named \(fields["voice"] ?? "")")
         }
         let speed = try speedField(fields["speed"], default: s.speed)
@@ -204,7 +204,8 @@ public final class VoiceAPI {
     }
 
     private func transcribe(_ req: HTTPRequest) async throws -> HTTPResponse {
-        let format = req.query["format"]?.lowercased() ?? ""
+        var format = req.query["format"]?.lowercased() ?? ""
+        if format == "pcm" { format = "" }      // ?format=pcm says what the body is (see open), not the answer
         guard ["", "ndjson", "json", "txt", "text", "srt", "vtt"].contains(format) else {
             throw HTTPError(status: 400, code: "bad_request", message: "format is json, txt, srt or vtt (or leave it out for NDJSON)")
         }
@@ -362,10 +363,17 @@ public final class VoiceAPI {
     }
 
     /// A body of text: JSON (when it looks like JSON), else the text itself.
+    /// The voice asked for: nil (the default) when none is given, else what was given, written
+    /// out, so a number or the like is an unknown voice rather than quietly the default.
+    static func voiceName(_ value: Any?) -> String? {
+        guard let value, !(value is NSNull) else { return nil }
+        return value as? String ?? "\(value)"
+    }
+
     private func textFields(_ req: HTTPRequest) throws -> [String: Any] {
         let data = try req.body.data()
         let text = String(data: data, encoding: .utf8) ?? ""
-        if req.contentType == "application/json" || text.drop(while: \.isWhitespace).hasPrefix("{") {
+        if req.contentType == "application/json" || (!req.contentType.hasPrefix("text/") && text.drop(while: \.isWhitespace).hasPrefix("{")) {
             guard let object = JSON.object(data) else {
                 throw HTTPError(status: 400, code: "bad_request", message: "the body isn't valid JSON")
             }

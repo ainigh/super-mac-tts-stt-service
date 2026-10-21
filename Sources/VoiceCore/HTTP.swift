@@ -257,7 +257,7 @@ public struct HTTPParser {
                     return
                 }
             case .chunkSize:
-                guard let line = takeLine() else { return }
+                guard let line = try takeLine() else { return }
                 let hex = line.split(separator: ";").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
                 guard let size = Int(hex, radix: 16), size >= 0 else {
                     throw HTTPError(status: 400, code: "bad_request", message: "bad chunk")
@@ -279,18 +279,22 @@ public struct HTTPParser {
                     return
                 }
             case .chunkEnd:
-                guard takeLine() != nil else { return }
+                guard let line = try takeLine() else { return }
+                guard line.isEmpty else { throw HTTPError(status: 400, code: "bad_request", message: "bad chunk") }
                 stage = .chunkSize
             case .trailers:
-                guard let line = takeLine() else { return }
+                guard let line = try takeLine() else { return }
                 if line.isEmpty { stage = .done }
             }
         }
     }
 
     /// The next line (without its CRLF), if a whole one has arrived.
-    private mutating func takeLine() -> String? {
-        guard let end = buffer.range(of: Data("\r\n".utf8)) else { return nil }
+    private mutating func takeLine() throws -> String? {
+        guard let end = buffer.range(of: Data("\r\n".utf8)) else {
+            if buffer.count > maxHead { throw HTTPError(status: 400, code: "bad_request", message: "bad chunk") }
+            return nil
+        }
         let line = String(data: Data(buffer[buffer.startIndex..<end.lowerBound]), encoding: .utf8) ?? ""
         buffer = Data(buffer[end.upperBound...])
         return line

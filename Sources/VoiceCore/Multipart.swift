@@ -70,11 +70,12 @@ public struct Multipart {
 
     /// name="file" from a Content-Disposition line.
     static func param(_ key: String, in line: String) -> String? {
-        for piece in line.split(separator: ";") {
-            let kv = piece.split(separator: "=", maxSplits: 1)
-            guard kv.count == 2, kv[0].trimmingCharacters(in: .whitespaces).lowercased() == key else { continue }
-            return kv[1].trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-        }
+        // key="a quoted value; may hold semicolons" or key=token
+        let pattern = #"(?:^|;)\s*"# + NSRegularExpression.escapedPattern(for: key) + #"\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]*))"#
+        guard let re = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+              let m = re.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) else { return nil }
+        if let r = Range(m.range(at: 1), in: line) { return line[r].replacingOccurrences(of: #"\""#, with: "\"") }
+        if let r = Range(m.range(at: 2), in: line) { return line[r].trimmingCharacters(in: .whitespaces) }
         return nil
     }
 
