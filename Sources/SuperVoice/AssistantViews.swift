@@ -104,7 +104,7 @@ struct AssistantView: View {
                     .symbolEffect(.variableColor.iterative, isActive: true)
                 Text("\(ai.speaking ?? Assistant.name) speaking…")
             }
-            if ai.jerryThinking, ai.phase != .thinking || ai.working?.contains(Team.teammate) == true {
+            if ai.jerryThinking {
                 ProgressView().controlSize(.small).padding(.leading, 6)
                 Text("\(Team.teammate) working…").foregroundStyle(Palette.teal)
             }
