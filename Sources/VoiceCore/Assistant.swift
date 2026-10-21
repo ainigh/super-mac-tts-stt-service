@@ -157,36 +157,171 @@ public enum Assistant {
 
 /// The tools the model may call: the chats kept before this one, and the library's dictations,
 /// transcripts and notes. It gets only what it asks for; a new chat starts knowing none of it.
+///
+/// Calls are hand-rolled, not Ollama's tool calling: the tools are described to the model in words,
+/// it asks for one by answering with a line of JSON (`{"tool": "list_chats", "arguments": {…}}`),
+/// the result goes back as the next message, and it answers. Any model can do it, tools or not.
 public enum AssistantTools {
     public static let maxChars = 20_000
 
-    /// The tools as Ollama takes them.
-    public static let definitions: [[String: Any]] = [
-        tool("list_chats", "Lists earlier conversations with the user (not this one), newest first, with their id, date, title and length. Call it when the user refers to something discussed before.",
-             ["limit": ["type": "integer", "description": "How many (default 20)"],
-              "query": ["type": "string", "description": "Only chats whose text has all these words"]]),
-        tool("load_chats", "Reads earlier conversations in full. Call it with ids from list_chats when the user asks about them or you need what was said.",
-             ["ids": ["type": "array", "items": ["type": "string"], "description": "The chats' ids (a unique prefix is enough)"]], required: ["ids"]),
-        tool("list_library", "Lists what the user kept in their library: dictations, transcripts of audio files, and notes, newest first, with id, kind, date, title and length. Call it when the user mentions something they recorded, transcribed or noted.",
-             ["kind": ["type": "string", "enum": ["dictation", "transcript", "note"], "description": "Only this kind"],
-              "query": ["type": "string", "description": "Only items whose title or text has all these words"],
-              "limit": ["type": "integer", "description": "How many (default 20)"]]),
-        tool("read_library", "Reads library items in full. Call it with ids from list_library.",
-             ["ids": ["type": "array", "items": ["type": "string"], "description": "The items' ids (a unique prefix is enough)"]], required: ["ids"]),
-    ]
+    /// A tool as the model is told about it.
+    public struct Tool: Equatable, Sendable {
+        public var name: String
+        public var description: String
+        /// Each argument: its name, and what it is ("integer, optional: how many").
+        public var arguments: [(String, String)]
 
-    static func tool(_ name: String, _ description: String, _ properties: [String: Any], required: [String] = []) -> [String: Any] {
-        ["type": "function",
-         "function": ["name": name, "description": description,
-                      "parameters": ["type": "object", "properties": properties, "required": required]]]
+        public init(name: String, description: String, arguments: [(String, String)] = []) {
+            self.name = name
+            self.description = description
+            self.arguments = arguments
+        }
+
+        public static func == (a: Tool, b: Tool) -> Bool {
+            a.name == b.name && a.description == b.description && a.arguments.map(\.0) == b.arguments.map(\.0) && a.arguments.map(\.1) == b.arguments.map(\.1)
+        }
+
+        /// Its line in the manual.
+        var manual: String {
+            var line = "- \(name): \(description)"
+            if !arguments.isEmpty {
+                line += " Arguments: " + arguments.map { "\($0.0) (\($0.1))" }.joined(separator: "; ") + "."
+            }
+            return line
+        }
     }
 
-    /// Runs a tool call against the library. `current`: this chat, which the model doesn't get to
-    /// read back. The answer is text for the model (JSON for lists).
-    public static func run(_ name: String, _ arguments: [String: Any], library: [LibraryRecord], current: UUID?) -> String {
+    /// The tools over the library.
+    public static let library: [Tool] = [
+        Tool(name: "list_chats", description: "Lists earlier conversations with the user (not this one), newest first, with their id, date, title and length. Use it when the user refers to something discussed before.",
+             arguments: [("limit", "integer, optional: how many, default 20"), ("query", "string, optional: only chats whose text has all these words")]),
+        Tool(name: "load_chats", description: "Reads earlier conversations in full. Use it with ids from list_chats when the user asks about them or you need what was said.",
+             arguments: [("ids", "list of strings: the chats' ids (a unique prefix is enough)")]),
+        Tool(name: "list_library", description: "Lists what the user kept in their library: dictations, transcripts of audio files, and notes, newest first, with id, kind, date, title and length. Use it when the user mentions something they recorded, transcribed or noted.",
+             arguments: [("kind", "string, optional: dictation, transcript or note"), ("query", "string, optional: only items whose title or text has all these words"), ("limit", "integer, optional: how many, default 20")]),
+        Tool(name: "read_library", description: "Reads library items in full. Use it with ids from list_library.",
+             arguments: [("ids", "list of strings: the items' ids (a unique prefix is enough)")]),
+    ]
+
+    /// How the model is told to call a tool, and what the tools are.
+    public static func manual(_ tools: [Tool]) -> String {
+        guard !tools.isEmpty else { return "" }
+        return """
+        You have tools. To use one, answer with nothing but one line of JSON, like this: \
+        {"tool": "list_chats", "arguments": {"query": "budget"}} \
+        The result comes back as the next message, marked as a tool result (it's not the user talking), and then you \
+        answer the user in words. One tool per answer; call another after if you need to. Never write that JSON unless \
+        you mean to call the tool, never make up a result, and don't mention the tools or their names to the user. \
+        The tools:
+        \(tools.map(\.manual).joined(separator: "\n"))
+        """
+    }
+
+    /// A tool call, as read out of the model's answer.
+    public struct Call: Equatable, Sendable {
+        public var name: String
+        public var argumentsJSON: String
+
+        public init(name: String, argumentsJSON: String = "{}") {
+            self.name = name
+            self.argumentsJSON = argumentsJSON
+        }
+
+        public var arguments: [String: Any] { JSON.object(Data(argumentsJSON.utf8)) ?? [:] }
+    }
+
+    /// The tool calls in an answer: each JSON object in it with a "tool" (or "name") key, in order,
+    /// whether bare, in a code fence, or among other text. Anything else in the answer is said.
+    public static func calls(in content: String) -> [Call] {
+        var out: [Call] = []
+        for object in objects(in: content) where isCall(object) {
+            guard let name = (object["tool"] ?? object["name"] ?? object["function"]) as? String, !name.isEmpty else { continue }
+            let args = object["arguments"] ?? object["args"] ?? object["parameters"] ?? object["input"]
+            var json = "{}"
+            if let a = args as? [String: Any] {
+                json = String(decoding: JSON.data(a), as: UTF8.self)
+            } else if let a = args as? String, let o = JSON.object(Data(a.utf8)) {
+                json = String(decoding: JSON.data(o), as: UTF8.self)
+            } else {
+                // Arguments beside the name: {"tool": "list_chats", "query": "budget"}.
+                let rest = object.filter { !["tool", "name", "function", "arguments", "args", "parameters", "input"].contains($0.key) }
+                if !rest.isEmpty, JSONSerialization.isValidJSONObject(rest) { json = String(decoding: JSON.data(rest), as: UTF8.self) }
+            }
+            out.append(Call(name: name, argumentsJSON: json))
+        }
+        return out
+    }
+
+    /// Every JSON object in the text (the outermost ones), in order.
+    static func objects(in text: String) -> [[String: Any]] {
+        let chars = Array(text.utf8)
+        var out: [[String: Any]] = []
+        var i = 0
+        while i < chars.count {
+            guard chars[i] == UInt8(ascii: "{"), let end = objectEnd(chars, from: i) else { i += 1; continue }
+            if let o = JSON.object(Data(chars[i...end])) { out.append(o) }
+            i = end + 1
+        }
+        return out
+    }
+
+    /// Where the object starting at `from` ends (its closing brace), minding strings; nil when it
+    /// never closes.
+    static func objectEnd(_ chars: [UInt8], from i: Int) -> Int? {
+        var depth = 0, inString = false, escaped = false
+        var j = i
+        while j < chars.count {
+            let c = chars[j]
+            if inString {
+                if escaped { escaped = false } else if c == UInt8(ascii: "\\") { escaped = true } else if c == UInt8(ascii: "\"") { inString = false }
+            } else if c == UInt8(ascii: "\"") {
+                inString = true
+            } else if c == UInt8(ascii: "{") {
+                depth += 1
+            } else if c == UInt8(ascii: "}") {
+                depth -= 1
+                if depth == 0 { return j }
+            }
+            j += 1
+        }
+        return nil
+    }
+
+    /// {"tool": …}, or {"name"/"function": …} with arguments beside it.
+    static func isCall(_ o: [String: Any]) -> Bool {
+        if o["tool"] is String { return true }
+        return (o["name"] ?? o["function"]) is String && (o["arguments"] ?? o["args"] ?? o["parameters"] ?? o["input"]) != nil
+    }
+
+    /// The answer without its tool calls (and the code fences around them): what's left to say.
+    public static func stripped(_ content: String) -> String {
+        let chars = Array(content.utf8)
+        var kept: [UInt8] = []
+        var i = 0
+        while i < chars.count {
+            if chars[i] == UInt8(ascii: "{"), let end = objectEnd(chars, from: i), let o = JSON.object(Data(chars[i...end])), isCall(o) {
+                i = end + 1
+                continue
+            }
+            kept.append(chars[i])
+            i += 1
+        }
+        var text = String(decoding: kept, as: UTF8.self)
+        text = text.replacingOccurrences(of: #"```[a-zA-Z]*\s*```"#, with: "", options: .regularExpression)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A tool's result as the model gets it (a message from the Mac, not the user).
+    public static func resultMessage(_ name: String, _ result: String) -> String {
+        "Result of the tool \(name) (from the Mac, not the user; use it to answer them):\n\(result)"
+    }
+
+    /// Runs a library tool. `current`: this chat, which the model doesn't get to read back. The
+    /// answer is text for the model (JSON for lists); nil when it isn't a library tool.
+    public static func run(_ name: String, _ arguments: [String: Any], library: [LibraryRecord], current: UUID?) -> String? {
         let limit = min(max((arguments["limit"] as? Int) ?? Int((arguments["limit"] as? Double) ?? 20), 1), 100)
         let query = (arguments["query"] as? String) ?? ""
-        let ids = (arguments["ids"] as? [String]) ?? (arguments["ids"] as? String).map { [$0] } ?? []
+        let ids = (arguments["ids"] as? [String]) ?? (arguments["ids"] as? String).map { [$0] } ?? (arguments["id"] as? String).map { [$0] } ?? []
         switch name {
         case "list_chats":
             let chats = library.filter { $0.kind == .chat && $0.id != current && $0.matches(query) }.prefix(limit)
@@ -208,8 +343,13 @@ public enum AssistantTools {
         case "read_library":
             return read(ids, from: library.filter { $0.kind != .chat }, what: "item")
         default:
-            return "There is no tool called \(name)."
+            return nil
         }
+    }
+
+    /// What the model is told when it asks for a tool there isn't.
+    public static func unknown(_ name: String, among tools: [Tool]) -> String {
+        "There is no tool called \(name). The tools are: \(tools.map(\.name).joined(separator: ", "))."
     }
 
     static func read(_ ids: [String], from records: [LibraryRecord], what: String) -> String {
@@ -262,34 +402,10 @@ public enum AssistantTools {
 
 // MARK: - The conversation
 
-/// What the model answered: text, and the tools it wants called first.
-public struct ModelReply: Equatable, Sendable {
-    public struct ToolCall: Equatable, Sendable {
-        public var name: String
-        public var argumentsJSON: String
-
-        public init(name: String, argumentsJSON: String) {
-            self.name = name
-            self.argumentsJSON = argumentsJSON
-        }
-
-        public var arguments: [String: Any] { JSON.object(Data(argumentsJSON.utf8)) ?? [:] }
-    }
-
-    public var content: String
-    public var toolCalls: [ToolCall]
-
-    public init(content: String, toolCalls: [ToolCall] = []) {
-        self.content = content
-        self.toolCalls = toolCalls
-    }
-}
-
 /// A language model that chats: Ollama, or a stand-in for tests.
 public protocol LanguageModel: AnyObject {
-    /// Sends the messages (Ollama's shape: role, content, tool_calls, tool_name) and the tools the
-    /// model may call (none: nil), and returns its answer.
-    func chat(model: String, messages: [[String: Any]], tools: [[String: Any]]?) async throws -> ModelReply
+    /// Sends the messages (Ollama's shape: role, content) and returns the answer's text.
+    func chat(model: String, messages: [[String: Any]]) async throws -> String
 }
 
 public enum AssistantError: Error, LocalizedError, Equatable {
@@ -309,12 +425,6 @@ public enum AssistantError: Error, LocalizedError, Equatable {
         case .badReply: return "Ollama's answer couldn't be read."
         }
     }
-
-    /// The model can't take tools: talk without them.
-    var isNoTools: Bool {
-        if case .server(_, let m) = self { return m.lowercased().contains("does not support tools") }
-        return false
-    }
 }
 
 /// One chat with the model: its turns, and the messages as the model has them. Each question goes
@@ -330,8 +440,6 @@ public final class Conversation {
     public var library: () -> [LibraryRecord]
     /// Rounds of tool calls per question.
     public var maxToolRounds = 6
-    /// The model takes tools, as far as is known (the first refusal turns it off for the chat).
-    public private(set) var toolsSupported = true
     /// Every tool call made, for the window to show.
     public private(set) var toolCalls: [String] = []
     private var wire: [[String: Any]] = []
@@ -346,6 +454,9 @@ public final class Conversation {
 
     public var isEmpty: Bool { turns.isEmpty }
 
+    /// The tools the model may call.
+    public var tools: [AssistantTools.Tool] { AssistantTools.library }
+
     /// What the model is told before anything else.
     public func systemPrompt(now: Date = Date()) -> String {
         var p = """
@@ -356,13 +467,14 @@ public final class Conversation {
         slightly off: take the likely meaning, and ask when it's unclear. The date and time now is \
         \(AssistantTools.longDate(now)); each message from the user says when it was said.
         """
-        if toolsSupported {
+        let tools = self.tools
+        if !tools.isEmpty {
             p += """
              You remember only this conversation. The user's earlier chats with you and their library (dictations, \
-            transcripts of audio files, and notes) are on this Mac, and you can look them up with the tools: use \
-            list_chats and load_chats when the user refers to something discussed before, and list_library and \
-            read_library when they mention something they recorded, transcribed or noted. Don't look anything up \
-            unless it's needed; never make up what a chat or an item says.
+            transcripts of audio files, and notes) are on this Mac, and you can look them up with the tools. Don't look \
+            anything up unless it's needed; never make up what a chat or an item says.
+
+            \(AssistantTools.manual(tools))
             """
         }
         return p
@@ -379,21 +491,18 @@ public final class Conversation {
             var round = 0
             while true {
                 let reply = try await send(now: now)
-                if reply.toolCalls.isEmpty || round >= maxToolRounds || !toolsSupported {
-                    content = reply.content
+                let calls = AssistantTools.calls(in: reply)
+                if calls.isEmpty || round >= maxToolRounds {
+                    content = calls.isEmpty ? reply : AssistantTools.stripped(reply)
                     break
                 }
                 round += 1
-                let calls: [[String: Any]] = reply.toolCalls.map { c -> [String: Any] in
-                    let function: [String: Any] = ["name": c.name, "arguments": c.arguments]
-                    return ["function": function]
-                }
-                wire.append(["role": "assistant", "content": reply.content, "tool_calls": calls])
+                wire.append(["role": "assistant", "content": reply])
                 let records = library()
-                for call in reply.toolCalls {
+                for call in calls {
                     toolCalls.append(call.name)
-                    let result = AssistantTools.run(call.name, call.arguments, library: records, current: id)
-                    wire.append(["role": "tool", "tool_name": call.name, "content": result])
+                    let result = await run(call, library: records)
+                    wire.append(["role": "user", "content": AssistantTools.resultMessage(call.name, result)])
                 }
             }
             var answer = content.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -409,21 +518,21 @@ public final class Conversation {
         }
     }
 
+    /// Runs one tool call.
+    func run(_ call: AssistantTools.Call, library records: [LibraryRecord]) async -> String {
+        if let result = AssistantTools.run(call.name, call.arguments, library: records, current: id) { return result }
+        return AssistantTools.unknown(call.name, among: tools)
+    }
+
     /// A question as the model gets it: with the date and time it was said, written out in full.
     public static func stamped(_ question: String, now: Date) -> String {
         "\(question)\n\n(said on \(AssistantTools.longDate(now)))"
     }
 
-    private func send(now: Date) async throws -> ModelReply {
+    private func send(now: Date) async throws -> String {
         guard !model.isEmpty else { throw AssistantError.noModel }
         let messages = [["role": "system", "content": systemPrompt(now: now)]] + wire
-        do {
-            return try await llm.chat(model: model, messages: messages, tools: toolsSupported ? AssistantTools.definitions : nil)
-        } catch let e as AssistantError where e.isNoTools && toolsSupported {
-            toolsSupported = false
-            let plain = [["role": "system", "content": systemPrompt(now: now)]] + wire
-            return try await llm.chat(model: model, messages: plain, tools: nil)
-        }
+        return try await llm.chat(model: model, messages: messages)
     }
 
     /// This chat, for the AI library.
@@ -453,34 +562,19 @@ public final class OllamaClient: LanguageModel {
         self.baseURL = URL(string: s) ?? URL(string: Self.defaultURL)!
     }
 
-    /// The request body for /api/chat.
-    public static func chatBody(model: String, messages: [[String: Any]], tools: [[String: Any]]?) -> [String: Any] {
-        var body: [String: Any] = ["model": model, "messages": messages, "stream": false]
-        if let tools, !tools.isEmpty { body["tools"] = tools }
-        return body
+    /// The request body for /api/chat: plain messages, no tools (calls are hand-rolled).
+    public static func chatBody(model: String, messages: [[String: Any]]) -> [String: Any] {
+        ["model": model, "messages": messages, "stream": false]
     }
 
-    /// Reads /api/chat's answer.
-    public static func reply(_ data: Data) throws -> ModelReply {
+    /// Reads /api/chat's answer: the message's text.
+    public static func reply(_ data: Data) throws -> String {
         guard let o = JSON.object(data), let message = o["message"] as? [String: Any] else { throw AssistantError.badReply }
-        let content = (message["content"] as? String) ?? ""
-        let calls = ((message["tool_calls"] as? [[String: Any]]) ?? []).compactMap { c -> ModelReply.ToolCall? in
-            guard let f = c["function"] as? [String: Any], let name = f["name"] as? String else { return nil }
-            let args: String
-            if let s = f["arguments"] as? String {
-                args = s
-            } else if let a = f["arguments"], JSONSerialization.isValidJSONObject(a) {
-                args = String(decoding: JSON.data(a), as: UTF8.self)
-            } else {
-                args = "{}"
-            }
-            return ModelReply.ToolCall(name: name, argumentsJSON: args)
-        }
-        return ModelReply(content: content, toolCalls: calls)
+        return (message["content"] as? String) ?? ""
     }
 
-    public func chat(model: String, messages: [[String: Any]], tools: [[String: Any]]?) async throws -> ModelReply {
-        let data = try await post("/api/chat", Self.chatBody(model: model, messages: messages, tools: tools))
+    public func chat(model: String, messages: [[String: Any]]) async throws -> String {
+        let data = try await post("/api/chat", Self.chatBody(model: model, messages: messages))
         return try Self.reply(data)
     }
 
