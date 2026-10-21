@@ -1,16 +1,16 @@
 import Foundation
 
-/// The assistant, Micky: a conversation with Ollama by voice. Said alone, a wake word ("micky",
-/// "ollama") wakes it; said first, what follows is the first question. Awake, everything said goes
-/// to the model and the answer is read back. A few words are commands instead ("stop", "new chat",
+/// The assistant, Mouse: a conversation with Ollama by voice. Said alone, the wake word ("mouse")
+/// wakes it; said first, what follows is the first question. Awake, everything said goes to the
+/// model and the answer is read back. A few words are commands instead ("stop", "new chat",
 /// "goodbye"). The platform does the listening and speaking; this is what's said, and what's sent.
 public enum Assistant {
-    public static let name = "Micky"
+    public static let name = "Mouse"
 
-    /// What wakes it, as the recognizer tends to write each (any of these, alone or first).
-    public static let wakeWords: [[String]] = [["micky"], ["mickey"], ["mikey"], ["nicky"], ["vicky"],
-                                               ["ollama"], ["o", "llama"], ["oh", "llama"], ["olama"], ["llama"], ["alama"]]
-    /// "Hey micky", "okay ollama": these may come before the wake word.
+    /// What wakes it, as the recognizer tends to write it (any of these, alone or first). Nothing
+    /// else does: always listening, only "mouse" is ever acted on.
+    public static let wakeWords: [[String]] = [["mouse"], ["mousse"], ["mouses"], ["mause"], ["maus"]]
+    /// "Hey mouse", "okay mouse": these may come before the wake word.
     static let greetings: Set<String> = ["hey", "hi", "hello", "ok", "okay", "yo"]
 
     public enum Command: Equatable, Sendable {
@@ -202,6 +202,61 @@ public enum AssistantTools {
         Tool(name: "read_library", description: "Reads library items in full. Use it with ids from list_library.",
              arguments: [("ids", "list of strings: the items' ids (a unique prefix is enough)")]),
     ]
+
+    /// The tools that change the library (never a chat; nothing is deleted).
+    public static let editing: [Tool] = [
+        Tool(name: "add_note", description: "Adds a note to the user's library (they see it in the Library window). Only when they ask you to note or keep something.",
+             arguments: [("text", "string: the note"), ("title", "string, optional: its title (else its first words)")]),
+        Tool(name: "update_library", description: "Changes a dictation, transcript or note in the library (never a chat), when the user asks: replaces its text, adds to its end, renames it, or stars it. Find its id with list_library, and read it first.",
+             arguments: [("id", "string: the item's id (a unique prefix is enough)"), ("text", "string, optional: its new text, all of it"),
+                         ("append", "string, optional: text added at its end, on a new line"), ("title", "string, optional: its new title"),
+                         ("starred", "boolean, optional: star it, or not")]),
+    ]
+
+    /// Runs an editing tool: what the model is told, and the record to save (nil: nothing to
+    /// save). Nil when it isn't an editing tool.
+    public static func edit(_ name: String, _ arguments: [String: Any], library: [LibraryRecord], now: Date = Date()) -> (result: String, save: LibraryRecord?)? {
+        switch name {
+        case "add_note":
+            guard let text = ToolRunTools.string(arguments["text"] ?? arguments["note"] ?? arguments["content"]) else { return ("Give the note's text.", nil) }
+            let title = ToolRunTools.string(arguments["title"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let r = LibraryRecord(kind: .note, text: text.trimmingCharacters(in: .whitespacesAndNewlines), title: title, created: now)
+            return ("Added the note “\(r.title)” (id \(r.id.uuidString)).", r)
+        case "update_library":
+            guard let id = ToolRunTools.string(arguments["id"] ?? arguments["ids"]) else { return ("Give the item's id, from list_library.", nil) }
+            let key = id.trimmingCharacters(in: .whitespaces).uppercased()
+            let found = library.filter { $0.id.uuidString.hasPrefix(key) }
+            guard found.count == 1, var r = found.first else {
+                return (found.isEmpty ? "No item has the id \(id)." : "The id \(id) matches more than one item; give more of it.", nil)
+            }
+            guard r.kind != .chat else { return ("Chats can't be changed.", nil) }
+            var did: [String] = []
+            if let text = arguments["text"] as? String {
+                r.text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                // The subtitles were the old words: they'd no longer match.
+                if r.segments != nil { r.segments = nil }
+                did.append("replaced its text")
+            }
+            if let more = ToolRunTools.string(arguments["append"] ?? arguments["add"]) {
+                let add = more.trimmingCharacters(in: .whitespacesAndNewlines)
+                r.text = r.text.isEmpty ? add : r.text + "\n" + add
+                if r.segments != nil { r.segments = nil }
+                did.append("added to its end")
+            }
+            if let title = ToolRunTools.string(arguments["title"]) {
+                r.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                did.append("renamed it “\(r.title)”")
+            }
+            if let star = arguments["starred"] as? Bool ?? (arguments["starred"] as? String).map({ $0.lowercased() == "true" }) {
+                r.starred = star
+                did.append(star ? "starred it" : "unstarred it")
+            }
+            guard !did.isEmpty else { return ("Say what to change: text, append, title or starred.", nil) }
+            return ("Done: \(did.joined(separator: ", ")) (\(r.kind.title.lowercased()) “\(r.title)”).", r)
+        default:
+            return nil
+        }
+    }
 
     /// How the model is told to call a tool, and what the tools are.
     public static func manual(_ tools: [Tool]) -> String {
@@ -456,6 +511,14 @@ public final class Conversation {
     public var library: () -> [LibraryRecord]
     /// Tool Mac Tool Run, when the model may run the user's scripts and flows through it.
     public var runner: ScriptRunner?
+    /// The skills that need the Mac (the browser, files, the clipboard, its status), when it has them.
+    public var skills: SkillRunner?
+    /// Saves a library item the model added or changed (nil: it can't edit the library).
+    public var save: ((LibraryRecord) -> Void)?
+    /// The skills that are on (see `Skills`); one that needs what isn't there is left out anyway.
+    public var enabled: Set<String> = Set(Skills.ids)
+    /// Each tool used, as it's used (off the main thread).
+    public var onToolUse: ((ToolUse) -> Void)?
     /// Answer quickly: the shortest answer that does it, no working it out first (thinking off).
     public var quick = true
     /// Rounds of tool calls per question.
@@ -481,12 +544,30 @@ public final class Conversation {
         c.wire = wire
         c.toolCalls = toolCalls
         c.runner = runner
+        c.skills = skills
+        c.save = save
+        c.enabled = enabled
+        c.onToolUse = onToolUse
+        c.quick = quick
         c.maxToolRounds = maxToolRounds
         return c
     }
 
+    /// The skills on, and with what they need.
+    public var activeSkills: [Skill] {
+        Skills.all.filter { s in
+            guard enabled.contains(s.id) else { return false }
+            switch s.id {
+            case Skills.editing.id: return save != nil
+            case Skills.scripts.id: return runner != nil
+            case Skills.browser.id, Skills.files.id, Skills.clipboard.id, Skills.mac.id: return skills != nil
+            default: return true
+            }
+        }
+    }
+
     /// The tools the model may call.
-    public var tools: [AssistantTools.Tool] { AssistantTools.library + (runner == nil ? [] : ToolRunTools.tools) }
+    public var tools: [AssistantTools.Tool] { activeSkills.flatMap { Skills.tools($0.id, sites: skills?.sites ?? []) } }
 
     /// What the model is told before anything else.
     public func systemPrompt(now: Date = Date()) -> String {
@@ -506,19 +587,7 @@ public final class Conversation {
         }
         let tools = self.tools
         if !tools.isEmpty {
-            p += """
-             You remember only this conversation. The user's earlier chats with you and their library (dictations, \
-            transcripts of audio files, and notes) are on this Mac, and you can look them up with the tools. Don't look \
-            anything up unless it's needed; never make up what a chat or an item says.
-            """
-            if runner != nil {
-                p += """
-                 The user also has Tool Mac Tool Run on this Mac, which runs their scripts and flows: when they ask \
-                you to run one, find its name with list_scripts or list_flows, then run it. Every run shows a card on \
-                their Mac and waits for them to click Run (or Don't Run), so it may take a while; tell them how it \
-                went and what it printed, in a sentence or two. Never run anything they didn't ask for.
-                """
-            }
+            p += Skills.prompt(activeSkills.map(\.id))
             p += "\n\n" + AssistantTools.manual(tools)
         }
         // Last, and only the day: what comes before stays the same from one question to the next, so
@@ -536,6 +605,8 @@ public final class Conversation {
         do {
             var content = ""
             var round = 0
+            // The library as the tools see it (what they change shows at once).
+            var records: [LibraryRecord]?
             while true {
                 let reply = try await send(now: now)
                 let calls = AssistantTools.calls(in: reply)
@@ -545,10 +616,11 @@ public final class Conversation {
                 }
                 round += 1
                 wire.append(["role": "assistant", "content": reply])
-                let records = library()
+                if records == nil { records = library() }
                 for call in calls {
                     toolCalls.append(call.name)
-                    let result = await run(call, library: records)
+                    let result = await run(call, library: &records!)
+                    onToolUse?(ToolUse(name: call.name, arguments: call.argumentsJSON, result: result))
                     wire.append(["role": "user", "content": AssistantTools.resultMessage(call.name, result)])
                 }
             }
@@ -565,10 +637,22 @@ public final class Conversation {
         }
     }
 
-    /// Runs one tool call.
-    func run(_ call: AssistantTools.Call, library records: [LibraryRecord]) async -> String {
-        if let result = AssistantTools.run(call.name, call.arguments, library: records, current: id) { return result }
-        if let runner, let result = await ToolRunTools.run(call.name, call.arguments, via: runner) { return result }
+    /// Runs one tool call (only the tools of the skills that are on).
+    func run(_ call: AssistantTools.Call, library records: inout [LibraryRecord]) async -> String {
+        let tools = self.tools
+        guard tools.contains(where: { $0.name == call.name }) else { return AssistantTools.unknown(call.name, among: tools) }
+        let args = call.arguments
+        if let result = AssistantTools.run(call.name, args, library: records, current: id) { return result }
+        if let (result, record) = AssistantTools.edit(call.name, args, library: records) {
+            if let record, let save {
+                save(record)
+                if let i = records.firstIndex(where: { $0.id == record.id }) { records[i] = record } else { records.insert(record, at: 0) }
+            }
+            return result
+        }
+        if call.name == "calculate" { return Calculator.run(args) }
+        if let runner, let result = await ToolRunTools.run(call.name, args, via: runner) { return result }
+        if let skills, let result = await skills.run(call.name, args) { return result }
         return AssistantTools.unknown(call.name, among: tools)
     }
 
@@ -586,6 +670,46 @@ public final class Conversation {
     /// This chat, for the AI library.
     public func record(existing: LibraryRecord?) -> LibraryRecord {
         Assistant.record(id: id, created: created, turns: turns, existing: existing)
+    }
+}
+
+/// A tool the model used: what it asked, and what it got.
+public struct ToolUse: Equatable, Sendable, Identifiable {
+    public var id = UUID()
+    public var name: String
+    public var arguments: String
+    public var result: String
+    public var time: Date
+
+    public init(name: String, arguments: String = "{}", result: String, time: Date = Date()) {
+        self.name = name
+        self.arguments = arguments
+        self.result = result
+        self.time = time
+    }
+
+    /// The skill it's part of.
+    public var skill: Skill? { Skills.skill(for: name) }
+
+    /// Its arguments, said briefly: "query: budget, limit: 5".
+    public var summary: String {
+        guard let o = JSON.object(Data(arguments.utf8)), !o.isEmpty else { return "" }
+        return o.keys.sorted().map { k in
+            let v = o[k].map { v -> String in
+                if let s = v as? String { return s }
+                if let a = v as? [Any] { return a.map { "\($0)" }.joined(separator: ", ") }
+                return "\(v)"
+            } ?? ""
+            return "\(k): \(v.count > 80 ? String(v.prefix(80)) + "…" : v)"
+        }.joined(separator: ", ")
+    }
+
+    /// The first web address it was about (a page opened), for opening again.
+    public var link: URL? {
+        let o = JSON.object(Data(arguments.utf8)) ?? [:]
+        if let u = o["url"] as? String, let url = FileSkill.webURL(u) { return url }
+        guard let r = result.range(of: #"(?m)^Address: (\S+)"#, options: .regularExpression) else { return nil }
+        return URL(string: String(result[r].dropFirst("Address: ".count)))
     }
 }
 

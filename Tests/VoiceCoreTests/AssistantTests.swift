@@ -20,27 +20,29 @@ final class FakeModel: LanguageModel {
 
 final class AssistantTests: XCTestCase {
     func testTheWakeWordAloneOrFirst() {
-        XCTAssertEqual(Assistant.hear("Micky.", awake: false), .wake)
-        XCTAssertEqual(Assistant.hear("Hey, Mickey!", awake: false), .wake)
-        XCTAssertEqual(Assistant.hear("ollama", awake: false), .wake)
-        XCTAssertEqual(Assistant.hear("O llama?", awake: false), .wake)
-        XCTAssertEqual(Assistant.hear("Micky, what's the weather like?", awake: false), .wakeThen("What's the weather like?"))
-        XCTAssertEqual(Assistant.hear("okay ollama how old is the moon", awake: false), .wakeThen("How old is the moon"))
-        XCTAssertEqual(Assistant.hear("Hey Micky stop", awake: false), .command(.stop))
+        XCTAssertEqual(Assistant.hear("Mouse.", awake: false), .wake)
+        XCTAssertEqual(Assistant.hear("Hey, mouse!", awake: false), .wake)
+        XCTAssertEqual(Assistant.hear("Mousse?", awake: false), .wake)
+        XCTAssertEqual(Assistant.hear("Mouse, what's the weather like?", awake: false), .wakeThen("What's the weather like?"))
+        XCTAssertEqual(Assistant.hear("okay mouse how old is the moon", awake: false), .wakeThen("How old is the moon"))
+        XCTAssertEqual(Assistant.hear("Hey mouse stop", awake: false), .command(.stop))
+        // Only "mouse" wakes it now.
+        XCTAssertEqual(Assistant.hear("Micky.", awake: false), .speech("Micky."))
+        XCTAssertEqual(Assistant.hear("Ollama, hi", awake: false), .speech("Ollama, hi"))
         // Asleep, anything else is only speech, which the caller lets by.
-        XCTAssertEqual(Assistant.hear("I told Mickey about it.", awake: false), .speech("I told Mickey about it."))
+        XCTAssertEqual(Assistant.hear("I told the mouse about it.", awake: false), .speech("I told the mouse about it."))
         XCTAssertEqual(Assistant.hear("Stop.", awake: false), .speech("Stop."))
     }
 
     func testAwakeEverythingIsSpeechButTheCommands() {
         XCTAssertEqual(Assistant.hear("What's the capital of Peru?", awake: true), .speech("What's the capital of Peru?"))
         XCTAssertEqual(Assistant.hear("Stop.", awake: true), .command(.stop))
-        XCTAssertEqual(Assistant.hear("Micky, stop talking.", awake: true), .command(.stop))
+        XCTAssertEqual(Assistant.hear("Mouse, stop talking.", awake: true), .command(.stop))
         XCTAssertEqual(Assistant.hear("New chat", awake: true), .command(.newChat))
         XCTAssertEqual(Assistant.hear("That's all.", awake: true), .command(.off))
         XCTAssertEqual(Assistant.hear("Goodbye!", awake: true), .command(.off))
         XCTAssertEqual(Assistant.hear("Stop the music", awake: true), .speech("Stop the music"))
-        XCTAssertEqual(Assistant.hear("Micky", awake: true), .wake)
+        XCTAssertEqual(Assistant.hear("Mouse", awake: true), .wake)
     }
 
     func testAnswersAreReadWithoutMarkdown() {
@@ -61,7 +63,7 @@ final class AssistantTests: XCTestCase {
         XCTAssertEqual(r.id, id)
         XCTAssertEqual(r.kind, .chat)
         XCTAssertEqual(r.title, "What's the capital of Peru")
-        XCTAssertEqual(r.text, "You: What's the capital of Peru?\n\nMicky: Lima.")
+        XCTAssertEqual(r.text, "You: What's the capital of Peru?\n\nMouse: Lima.")
         XCTAssertEqual(r.turns, turns)
         XCTAssertEqual(r.modified, Date(timeIntervalSince1970: 20))
         var starred = r
@@ -113,7 +115,7 @@ final class AssistantTests: XCTestCase {
         let id = try XCTUnwrap(list[0]["id"] as? String)
 
         let loaded = tool("load_chats", ["ids": [String(id.prefix(8)).lowercased()]], library: records, current: current)
-        XCTAssertTrue(loaded.contains("Micky: It's on Tuesday."))
+        XCTAssertTrue(loaded.contains("Mouse: It's on Tuesday."))
         XCTAssertTrue(loaded.contains("(chat, 2023-11-14") || loaded.contains("(chat, 2023-11-15"))   // the time zone decides the day
         XCTAssertTrue(tool("load_chats", ["ids": [current.uuidString]], library: records, current: current).contains("No chat has the id"))
         XCTAssertEqual(tool("list_chats", [:], library: [records[0]], current: current), "There are no earlier chats.")
@@ -174,7 +176,7 @@ final class AssistantTests: XCTestCase {
         XCTAssertEqual(model.sent.count, 2)
         XCTAssertEqual(model.sent[0].model, "llama3.2")
         XCTAssertEqual(model.sent[0].messages.map { $0["role"] as? String }, ["system", "user"])
-        XCTAssertTrue(((model.sent[0].messages[0]["content"] as? String) ?? "").contains("Micky"))
+        XCTAssertTrue(((model.sent[0].messages[0]["content"] as? String) ?? "").contains("Mouse"))
         XCTAssertTrue(((model.sent[0].messages[0]["content"] as? String) ?? "").contains("- list_chats:"))
         // The day in the system prompt (so it stays the same, and Ollama reuses it), the time in full on each message.
         let when = AssistantTools.longDate(Date(timeIntervalSince1970: 1_700_000_000))
