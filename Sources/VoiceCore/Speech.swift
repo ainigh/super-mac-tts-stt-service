@@ -205,7 +205,10 @@ public struct PhraseCutter {
     private var levels: [Float] = []        // per frame of `open`
     private var carry: [Float] = []         // samples short of a whole frame
     /// The background's loudness, followed slowly; speech is well above it.
-    private var floor: Float = 0.003
+    private var floor: Float = 0.0005
+    /// Louder than this always counts as speech, however quiet the background: a whisper-quiet
+    /// microphone (Apple's voice processing gives a much quieter one) must still start a phrase.
+    static let quietest: Float = 0.002
 
     public init(pause: Double, longest: Double = 14) {
         self.pause = pause
@@ -261,17 +264,21 @@ public struct PhraseCutter {
     }
 
     /// Louder than this counts as speech.
-    var threshold: Float { max(0.006, floor * 3.5) }
+    var threshold: Float { max(Self.quietest, floor * 3.5) }
 
     private mutating func addFrame(_ chunk: [Float]) -> Phrase? {
         let level = Self.rms(chunk[...])
         let loud = level > threshold
-        // The floor drops quickly to quiet and rises slowly with steady background noise; speech
-        // doesn't move it.
+        // The floor drops quickly to quiet and rises slowly with steady background noise. Speech
+        // hardly moves it: while it's loud the floor creeps up (doubling in about seven seconds),
+        // so steady noise above the threshold is soon taken for background (and nothing loud ever
+        // pulls it above itself), while the dips between words pull it straight back down.
         if level < floor {
             floor = floor * 0.9 + level * 0.1
         } else if !loud {
             floor = min(0.015, floor * 0.99 + level * 0.01)
+        } else {
+            floor = min(0.015, level, floor * 1.002)
         }
         open += chunk
         levels.append(level)

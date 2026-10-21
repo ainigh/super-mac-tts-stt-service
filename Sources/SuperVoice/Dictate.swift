@@ -225,12 +225,14 @@ final class Recorder: ObservableObject {
         Task.detached { [weak self] in
             var said = ""
             var problem: String?
+            // A quiet microphone (voice processing's is) is turned up to what the models expect.
+            let audio = PCM.lifted(item.samples)
             do {
                 // One of the voices talking, not the user: dropped unheard.
-                if let playing = item.playing, let screen, await screen(item.samples, playing) {
+                if let playing = item.playing, let screen, await screen(audio, playing) {
                     said = ""
                 } else {
-                    said = try await Neural.shared.write(item.samples).text
+                    said = try await Neural.shared.write(audio).text
                 }
             } catch {
                 problem = error.localizedDescription
@@ -292,7 +294,7 @@ final class Recorder: ObservableObject {
         let mine = (generation, phraseNumber)
         let audio = cutter.open
         Task.detached { [weak self] in
-            let said = (try? await Neural.shared.write(audio).text) ?? ""
+            let said = (try? await Neural.shared.write(PCM.lifted(audio)).text) ?? ""
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.guessing = false
