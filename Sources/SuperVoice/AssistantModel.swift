@@ -10,6 +10,8 @@ struct AssistantSettings: Codable, Equatable {
     /// Ollama's name for it ("llama3.2:latest"); empty: the first one Ollama has.
     var model = ""
     var idleSeconds: Double = 60
+    /// Tool Mac Tool Run, which runs the user's scripts for the model; empty: not offered.
+    var toolRunURL = ToolRunClient.defaultURL
 }
 
 /// AI Listen: a conversation with Ollama by voice. Started, it listens for "Micky" or "Ollama";
@@ -58,6 +60,8 @@ final class AssistantModel: ObservableObject {
 
     private var chat: Conversation?
     private var client: OllamaClient
+    /// Tool Mac Tool Run, when its address is set.
+    private var runner: ToolRunClient?
     private var lastActivity = Date()
     private var idleTimer: Timer?
     private var watching: Set<AnyCancellable> = []
@@ -76,6 +80,7 @@ final class AssistantModel: ObservableObject {
         settings = loaded
         sounds = defaults.object(forKey: "assistantSounds") as? Bool ?? true
         client = OllamaClient(baseURL: loaded.ollamaURL)
+        runner = Self.runner(for: loaded)
         listener.onUtterance = { [weak self] said in self?.heard(said) }
         listener.$text.receive(on: DispatchQueue.main).sink { [weak self] t in
             self?.hearing = t
@@ -237,6 +242,7 @@ final class AssistantModel: ObservableObject {
         thinking = false
         pending = []
         chat = Conversation(llm: client, model: settings.model, library: { [] })
+        chat?.runner = runner
         turns = []
         lastToolCalls = []
         if announce {
@@ -336,7 +342,14 @@ final class AssistantModel: ObservableObject {
             models = []
             refreshModels()
         }
+        runner = Self.runner(for: s)
+        chat?.runner = runner
         chat?.model = s.model
+    }
+
+    static func runner(for s: AssistantSettings) -> ToolRunClient? {
+        let url = s.toolRunURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        return url.isEmpty ? nil : ToolRunClient(baseURL: url)
     }
 
     /// Asks Ollama which models it has; with none chosen (or the chosen one gone), takes the first.

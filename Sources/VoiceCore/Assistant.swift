@@ -438,6 +438,8 @@ public final class Conversation {
     public var llm: LanguageModel
     /// The library as it is now (for the tools).
     public var library: () -> [LibraryRecord]
+    /// Tool Mac Tool Run, when the model may run the user's scripts and flows through it.
+    public var runner: ScriptRunner?
     /// Rounds of tool calls per question.
     public var maxToolRounds = 6
     /// Every tool call made, for the window to show.
@@ -455,7 +457,7 @@ public final class Conversation {
     public var isEmpty: Bool { turns.isEmpty }
 
     /// The tools the model may call.
-    public var tools: [AssistantTools.Tool] { AssistantTools.library }
+    public var tools: [AssistantTools.Tool] { AssistantTools.library + (runner == nil ? [] : ToolRunTools.tools) }
 
     /// What the model is told before anything else.
     public func systemPrompt(now: Date = Date()) -> String {
@@ -473,9 +475,16 @@ public final class Conversation {
              You remember only this conversation. The user's earlier chats with you and their library (dictations, \
             transcripts of audio files, and notes) are on this Mac, and you can look them up with the tools. Don't look \
             anything up unless it's needed; never make up what a chat or an item says.
-
-            \(AssistantTools.manual(tools))
             """
+            if runner != nil {
+                p += """
+                 The user also has Tool Mac Tool Run on this Mac, which runs their scripts and flows: when they ask \
+                you to run one, find its name with list_scripts or list_flows, then run it. Every run shows a card on \
+                their Mac and waits for them to click Run (or Don't Run), so it may take a while; tell them how it \
+                went and what it printed, in a sentence or two. Never run anything they didn't ask for.
+                """
+            }
+            p += "\n\n" + AssistantTools.manual(tools)
         }
         return p
     }
@@ -521,6 +530,7 @@ public final class Conversation {
     /// Runs one tool call.
     func run(_ call: AssistantTools.Call, library records: [LibraryRecord]) async -> String {
         if let result = AssistantTools.run(call.name, call.arguments, library: records, current: id) { return result }
+        if let runner, let result = await ToolRunTools.run(call.name, call.arguments, via: runner) { return result }
         return AssistantTools.unknown(call.name, among: tools)
     }
 

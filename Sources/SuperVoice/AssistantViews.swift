@@ -11,6 +11,7 @@ struct AssistantView: View {
     @ObservedObject var listener = AssistantModel.shared.listener
     @State private var typed = ""
     @State private var url = AssistantModel.shared.settings.ollamaURL
+    @State private var toolRunURL = AssistantModel.shared.settings.toolRunURL
     @State private var showSettings = false
 
     var body: some View {
@@ -219,7 +220,16 @@ struct AssistantView: View {
                     Spacer()
                     Toggle("Sounds", isOn: $ai.sounds).toggleStyle(.checkbox).font(.system(size: 11))
                 }
-                Text("Everything stays on this Mac: Ollama runs here, and so do the voices and the listening. Pick a model that takes tools (llama3.1, llama3.2, qwen2.5, mistral) for it to look things up in the library; others just talk.")
+                HStack(spacing: 8) {
+                    Text("Scripts").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+                    TextField(ToolRunClient.defaultURL, text: $toolRunURL)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+                        .onSubmit(connectToolRun)
+                        .help("Tool Mac Tool Run's address: with it, the model can list and run your scripts and flows (each run waits for you to click Run). Empty: it can't.")
+                    Button("Set", action: connectToolRun).disabled(toolRunURL == ai.settings.toolRunURL)
+                }
+                Text("Everything stays on this Mac: Ollama runs here, and so do the voices and the listening. Any model can look things up in the library, and run your scripts through Tool Mac Tool Run when it's running (nothing runs until you click Run on its card).")
                     .font(.system(size: 11)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
             }
             .padding(.top, 6)
@@ -237,6 +247,11 @@ struct AssistantView: View {
         ai.change { $0.ollamaURL = url.trimmingCharacters(in: .whitespacesAndNewlines) }
         url = ai.settings.ollamaURL
         ai.refreshModels()
+    }
+
+    private func connectToolRun() {
+        ai.change { $0.toolRunURL = toolRunURL.trimmingCharacters(in: .whitespacesAndNewlines) }
+        toolRunURL = ai.settings.toolRunURL
     }
 
     static func toolName(_ tool: String) -> String {
