@@ -128,11 +128,16 @@ final class AssistantModel: ObservableObject {
 
     // MARK: On and off
 
-    /// Starts listening (a new chat).
-    func start() {
-        guard !on else { return }
+    /// Starts listening (a new chat). `awake`: no wake word needed, just talk; `question`: asked
+    /// right away. Neither opens the window: it works all the same without it.
+    func start(awake wakeNow: Bool = false, question: String? = nil) {
+        if on {
+            if wakeNow, !awake { wake() }
+            if let question { ask(question) }
+            return
+        }
         on = true
-        awake = false
+        awake = wakeNow
         problem = nil
         newChat(say: false)
         activity()
@@ -140,7 +145,13 @@ final class AssistantModel: ObservableObject {
         idleTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.checkIdle() }
         resume()
         refreshModels()
-        say("Say “\(Assistant.name)” or “Ollama”, then talk")
+        if wakeNow {
+            play("Pop")
+            say("Listening: just talk")
+        } else {
+            say("Say “\(Assistant.name)” or “Ollama”, then talk")
+        }
+        if let question { ask(question) }
     }
 
     /// Stops: the microphone closes and the voice stops. The chat stays in the AI library.
@@ -163,6 +174,11 @@ final class AssistantModel: ObservableObject {
 
     func toggle() {
         on ? stop(reason: "Turned off") : start()
+    }
+
+    /// The panel's tile: talk with Ollama now, no wake word; again to stop.
+    func toggleTalking() {
+        on ? stop(reason: "Turned off") : start(awake: true)
     }
 
     /// Listens, unless dictation or a voice has the floor.

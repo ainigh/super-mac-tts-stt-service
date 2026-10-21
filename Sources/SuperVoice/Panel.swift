@@ -102,8 +102,16 @@ struct PanelView: View {
             ToolTile(title: "Library", detail: "\(Library.shared.items.filter { $0.kind != .chat }.count) saved", symbol: "square.grid.2x2.fill", colors: [Palette.green, Palette.teal]) {
                 close(); Windows.show(.library)
             }
-            ToolTile(title: "AI listen", detail: assistant.on ? "On: say “Micky”, then talk" : "Talk with Ollama", symbol: "sparkles", colors: [Palette.violet, Palette.pink]) {
-                close(); Windows.show(.assistant)
+            ToolTile(title: "AI listen", detail: assistant.on ? "On: just talk (click to stop)" : "Talk with Ollama", symbol: assistant.on ? "stop.fill" : "sparkles",
+                     colors: [Palette.violet, Palette.pink]) {
+                // Talk right away, no wake word, and no window: the chat works without it (AI library shows it).
+                close(); assistant.toggleTalking()
+            }
+            .help(assistant.on ? "Stop talking with Ollama (the chat stays in the AI library). Right-click for its window."
+                               : "Talk with Ollama now: just talk, no wake word. Right-click for its window and settings.")
+            .contextMenu {
+                Button("Open AI Listen window") { close(); Windows.show(.assistant) }
+                Button(assistant.on ? "Stop" : "Start, listening for “\(Assistant.name)”") { close(); assistant.toggle() }
             }
             ToolTile(title: "AI library", detail: "\(Library.shared.items.filter { $0.kind == .chat }.count) chats", symbol: "bubble.left.and.text.bubble.right.fill", colors: [Palette.blue, Palette.violet]) {
                 close(); Windows.show(.chats)
