@@ -97,9 +97,14 @@ final class AssistantTests: XCTestCase {
         return ([mine, old, transcript, note], current)
     }
 
+    /// A library tool's answer (it's one of them).
+    private func tool(_ name: String, _ arguments: [String: Any], library: [LibraryRecord], current: UUID) -> String {
+        AssistantTools.run(name, arguments, library: library, current: current) ?? "(not a library tool)"
+    }
+
     func testTheToolsListAndReadWhatsKeptButNeverThisChat() throws {
         let (records, current) = library()
-        let chats = AssistantTools.run("list_chats", [:], library: records, current: current)
+        let chats = tool("list_chats", [:], library: records, current: current)
         XCTAssertTrue(chats.contains("Remind me about the budget meeting"))
         XCTAssertFalse(chats.contains("Secret"))
         let list = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(chats.utf8)) as? [[String: Any]])
@@ -107,22 +112,22 @@ final class AssistantTests: XCTestCase {
         XCTAssertEqual(list[0]["turns"] as? Int, 2)
         let id = try XCTUnwrap(list[0]["id"] as? String)
 
-        let loaded = AssistantTools.run("load_chats", ["ids": [String(id.prefix(8)).lowercased()]], library: records, current: current)
+        let loaded = tool("load_chats", ["ids": [String(id.prefix(8)).lowercased()]], library: records, current: current)
         XCTAssertTrue(loaded.contains("Micky: It's on Tuesday."))
         XCTAssertTrue(loaded.contains("(chat, 2023-11-14") || loaded.contains("(chat, 2023-11-15"))   // the time zone decides the day
-        XCTAssertTrue(AssistantTools.run("load_chats", ["ids": [current.uuidString]], library: records, current: current).contains("No chat has the id"))
-        XCTAssertEqual(AssistantTools.run("list_chats", [:], library: [records[0]], current: current), "There are no earlier chats.")
+        XCTAssertTrue(tool("load_chats", ["ids": [current.uuidString]], library: records, current: current).contains("No chat has the id"))
+        XCTAssertEqual(tool("list_chats", [:], library: [records[0]], current: current), "There are no earlier chats.")
 
-        let items = AssistantTools.run("list_library", ["kind": "note"], library: records, current: current)
+        let items = tool("list_library", ["kind": "note"], library: records, current: current)
         XCTAssertTrue(items.contains("Shopping"))
         XCTAssertFalse(items.contains("Meeting"))
-        let found = AssistantTools.run("list_library", ["query": "budget"], library: records, current: current)
+        let found = tool("list_library", ["query": "budget"], library: records, current: current)
         XCTAssertTrue(found.contains("meeting.mp3"))
         XCTAssertFalse(found.contains("Remind me"))                                 // chats aren't library items
-        let read = AssistantTools.run("read_library", ["ids": [records[3].id.uuidString]], library: records, current: current)
+        let read = tool("read_library", ["ids": [records[3].id.uuidString]], library: records, current: current)
         XCTAssertTrue(read.hasPrefix("## Shopping (note, "))
         XCTAssertTrue(read.contains("Buy milk and eggs"))
-        XCTAssertTrue(AssistantTools.run("read_library", ["ids": [String]()], library: records, current: current)?.contains("Give the ids") ?? false)
+        XCTAssertTrue(tool("read_library", ["ids": [String]()], library: records, current: current).contains("Give the ids"))
         XCTAssertNil(AssistantTools.run("nothing", [:], library: records, current: current))
         XCTAssertTrue(AssistantTools.unknown("nothing", among: AssistantTools.library).contains("no tool called nothing"))
         XCTAssertEqual(AssistantTools.library.map(\.name), ["list_chats", "load_chats", "list_library", "read_library"])
