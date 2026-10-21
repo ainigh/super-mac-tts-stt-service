@@ -121,7 +121,7 @@ struct AssistantView: View {
                         .id("thinking")
                     }
                     if !ai.lastToolCalls.isEmpty, !ai.thinking {
-                        Text("Looked up: " + ai.lastToolCalls.map(Self.toolName).joined(separator: ", "))
+                        Text("Used: " + Self.toolNames(ai.lastToolCalls))
                             .font(.system(size: 11)).foregroundStyle(.tertiary)
                     }
                     if ai.on, !ai.hearing.isEmpty {
@@ -142,6 +142,9 @@ struct AssistantView: View {
             .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .onChange(of: ai.turns.count) { _, n in
                 withAnimation { scroller.scrollTo(n - 1, anchor: .bottom) }
+            }
+            .onChange(of: ai.thinking) { _, thinking in
+                if thinking { withAnimation { scroller.scrollTo("thinking", anchor: .bottom) } }
             }
             .onChange(of: ai.hearing) { _, h in
                 if !h.isEmpty { scroller.scrollTo("hearing", anchor: .bottom) }
@@ -260,8 +263,21 @@ struct AssistantView: View {
         case "load_chats": return "a chat"
         case "list_library": return "the library"
         case "read_library": return "a library item"
+        case "list_scripts": return "your scripts"
+        case "run_script": return "a script"
+        case "list_flows": return "your flows"
+        case "run_flow", "run_flow_code": return "a flow"
+        case "check_flow": return "a flow check"
+        case "list_runs", "read_run": return "the runs"
+        case "stop_run": return "stopping a run"
         default: return tool
         }
+    }
+
+    /// "earlier chats, a chat": each once, in the order first used.
+    static func toolNames(_ tools: [String]) -> String {
+        var seen = Set<String>()
+        return tools.map(toolName).filter { seen.insert($0).inserted }.joined(separator: ", ")
     }
 }
 
