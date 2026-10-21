@@ -358,14 +358,17 @@ final class AssistantModel: ObservableObject {
         let board = SkillsModel.shared
         skills.sites = board.sites
         skills.searchTemplate = board.searchTemplate
+        skills.showBrowser = board.showBrowser
         c.runner = runner
         c.skills = skills
         c.enabled = board.enabled
         c.quick = !settings.thinking
         c.save = { [weak self] record in
             DispatchQueue.main.async {
+                let new = Library.shared.item(record.id) == nil
                 Library.shared.save(record)
                 self?.changedLibrary = true
+                self?.say((new ? "Saved in the library: " : "Changed in the library: ") + record.title)
             }
         }
         c.onToolUse = { use in DispatchQueue.main.async { SkillsModel.shared.record(use) } }

@@ -64,14 +64,21 @@ each with a switch (the model is told only about those on), what the model used,
   say about the budget last week?", "read me yesterday's dictation").
 - **Library editing**: add notes, and change dictations, transcripts and notes (replace or add to
   their text, rename, star) when you ask ("note: call Sam at four", "add eggs to my shopping
-  note"). Never chats, and nothing is deleted.
-- **Browser**: in your default browser, where you see it: web searches (Google, or set your own),
+  note"). Never chats, and nothing is deleted. Only a tool saves: if the model says it saved
+  something when nothing did, it's told so and asked to do it, and each real save shows a line in
+  AI Listen ("Saved in the library: …") and in what it used.
+- **Browser**: in your default browser: web searches (Google, or set your own),
   your sites (Wikipedia and YouTube to start with; add one as `name https://…{query}`), opening a
   page, reading the page you have open, and finding text on it (highlighted, scrolled to). Safari
   and the Chromium browsers (Chrome, Brave, Edge, Arc, Vivaldi, Opera) are read in place once
   **Allow JavaScript from Apple Events** is on (Safari: Develop menu; Chrome: View > Developer),
   and macOS asks once to let Super Voice control the browser. Any other browser (or that off), the
   page still opens there and is read by fetching it.
+  **Show the browser as it opens pages** (on by default) brings it to the front as it opens a page;
+  off, pages open behind, and "show me" brings it forward.
+- **This app**: "show me my library", "open my shopping note", "find the budget chat": it opens the
+  app's own windows (the library at an item or searched, the AI library, Dictate, Read aloud,
+  Transcribe, AI Listen, the panel).
 - **Files**: find files with Spotlight, list folders, read text, Markdown, code, CSV, JSON, PDF,
   RTF and Word files. Only to look; hidden files and folders and `~/Library` (but iCloud Drive)
   stay out, and so does anything outside your home folder, `/Applications` and `/Volumes`.

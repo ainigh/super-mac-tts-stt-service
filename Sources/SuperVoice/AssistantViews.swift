@@ -299,6 +299,8 @@ struct AssistantView: View {
         case "read_clipboard": return "the clipboard"
         case "mac_status": return "the Mac"
         case "calculate": return "the calculator"
+        case "show_app": return "opening a window"
+        case "show_browser": return "showing the browser"
         default: return tool
         }
     }
@@ -392,6 +394,13 @@ struct ChatBubble: View {
 /// The AI library: every chat with the assistant, by day; open one to read it, hear it, copy or
 /// save it, or delete it.
 struct ChatsView: View {
+    /// Set from elsewhere (the model's show_app): a chat to open, words to search for.
+    final class Selection: ObservableObject {
+        static let shared = Selection()
+        @Published var id: UUID?
+        @Published var query: String?
+    }
+
     @EnvironmentObject var service: Service
     @EnvironmentObject var library: Library
     @ObservedObject var reader = Service.shared.reader
@@ -443,6 +452,16 @@ struct ChatsView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: selected)
+        .onReceive(Selection.shared.$id) { id in
+            guard let id else { return }
+            selected = id
+            Selection.shared.id = nil
+        }
+        .onReceive(Selection.shared.$query) { q in
+            guard let q else { return }
+            query = q
+            Selection.shared.query = nil
+        }
         .confirmationDialog("Delete “\(confirmDelete?.title ?? "")”?", isPresented: Binding(get: { confirmDelete != nil },
                                                                                             set: { if !$0 { confirmDelete = nil } })) {
             Button("Delete", role: .destructive) {

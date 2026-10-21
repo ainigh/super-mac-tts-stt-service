@@ -85,8 +85,41 @@ final class MacSkills: MacHost {
         }
     }
 
-    func open(_ url: URL) async -> Bool {
-        await MainActor.run { NSWorkspace.shared.open(url) }
+    func open(_ url: URL, inFront: Bool) async -> Bool {
+        await withCheckedContinuation { k in
+            DispatchQueue.main.async {
+                let config = NSWorkspace.OpenConfiguration()
+                config.activates = inFront
+                NSWorkspace.shared.open(url, configuration: config) { _, error in k.resume(returning: error == nil) }
+            }
+        }
+    }
+
+    /// AppleScript's activate: it brings the app forward even when Super Voice (a menu bar app)
+    /// isn't the one in front, which opening alone may not.
+    func bringForward(_ bundleID: String) async -> Bool {
+        if case .success = await appleScript("tell application id \"\(bundleID)\" to activate") { return true }
+        return false
+    }
+
+    func showApp(_ window: AppWindow, item: UUID?, query: String?) async -> Bool {
+        await MainActor.run { () -> Bool in
+            switch window {
+            case .library:
+                if let query { LibraryView.Selection.shared.query = query }
+                if let item { Windows.showItem(item) } else { Windows.show(.library) }
+            case .ai_library:
+                if let query { ChatsView.Selection.shared.query = query }
+                if let item { ChatsView.Selection.shared.id = item }
+                Windows.show(.chats)
+            case .dictate: Windows.show(.dictate)
+            case .read_aloud: Windows.show(.read)
+            case .transcribe: Windows.show(.transcribe)
+            case .ai_listen: Windows.show(.assistant)
+            case .panel: Main.delegate.show(takeKeyboard: false)
+            }
+            return true
+        }
     }
 
     func appleScript(_ source: String) async -> Result<String, HostError> {

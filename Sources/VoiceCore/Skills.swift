@@ -32,7 +32,9 @@ public enum Skills {
     public static let math = Skill(id: "math", title: "Calculator", summary: "Works sums out exactly instead of guessing", symbol: "function")
     public static let scripts = Skill(id: "scripts", title: "Scripts", summary: "Runs your scripts and flows through Tool Mac Tool Run (each run waits for you to click Run)", symbol: "terminal.fill", readOnly: false)
 
-    public static let all: [Skill] = [library, editing, browser, files, clipboard, mac, math, scripts]
+    public static let app = Skill(id: "app", title: "This app", summary: "Opens Super Voice's own windows when you ask: the library (at an item, or searched), the AI library, Dictate, Read aloud, Transcribe, AI Listen, the panel", symbol: "macwindow")
+
+    public static let all: [Skill] = [library, editing, browser, files, clipboard, mac, math, app, scripts]
     public static var ids: [String] { all.map(\.id) }
 
     /// The tools of a skill (the browser's include the user's sites).
@@ -44,6 +46,10 @@ public enum Skills {
         case files.id: return FileSkill.tools
         case clipboard.id: return [AssistantTools.Tool(name: "read_clipboard", description: "Reads what the user last copied (its text).")]
         case mac.id: return [AssistantTools.Tool(name: "mac_status", description: "Tells about the Mac now: the app in front and its window, the apps open, battery, free disk space, memory, macOS version, and how long since it started.")]
+        case app.id: return [AssistantTools.Tool(name: "show_app", description: "Opens one of this app's windows for the user to see, when they ask to see something (\"show me my library\", \"open the note\"). With item, the library opens at that item (a chat opens in the AI library); with query, it opens searched.",
+                                                 arguments: [("window", "string: " + AppWindow.allCases.map(\.rawValue).joined(separator: ", ")),
+                                                             ("item", "string, optional: a library item's or chat's id (a unique prefix is enough)"),
+                                                             ("query", "string, optional: words to search the library or the AI library for")])]
         case math.id: return [AssistantTools.Tool(name: "calculate", description: "Works out arithmetic exactly: + - * / ^ %, parentheses, sqrt, sin, cos, tan, log, ln, abs, round, floor, ceil, pi, e. Use it for any sum instead of working it out yourself.",
                                                   arguments: [("expression", "string: the sum, like (12.5 * 3) / 4")])]
         case scripts.id: return ToolRunTools.tools
@@ -69,15 +75,19 @@ public enum Skills {
         if on.contains(editing.id) {
             p += """
              You can add notes to their library and change what's in it (never chats), but only when they ask you to; \
-            say in a few words what you changed.
+            say in a few words what you changed. Only a tool saves anything: never say something was added or \
+            changed unless a tool's result says it was.
             """
         }
         if on.contains(browser.id) {
             p += """
              You can use the user's own web browser: open pages, search the web, read the page they have open, and \
-            find text on it. They see whatever you open. Use it for anything current or that you don't know, and say \
-            where the answer came from.
+            find text on it. Use it for anything current or that you don't know, and say where the answer came from. \
+            When they want to see it ("show me"), pass show: true, or use show_browser.
             """
+        }
+        if on.contains(app.id) {
+            p += " When they ask to see something of this app (their library, a note, a chat, Dictate…), open it with show_app."
         }
         if on.contains(files.id) { p += " You can find and read the files on their Mac, only to look: you can't change them." }
         if on.contains(clipboard.id) || on.contains(mac.id) { p += " You can see what they copied, and how their Mac is doing, when it helps." }
@@ -106,12 +116,37 @@ public protocol MacHost: AnyObject {
     func documentText(_ url: URL) async -> String?
     /// The default browser: its bundle id and name.
     func defaultBrowser() async -> (id: String, name: String)?
-    /// Opens a link in the default browser.
-    func open(_ url: URL) async -> Bool
+    /// Opens a link in the default browser; `inFront`: the browser comes to the front with it.
+    func open(_ url: URL, inFront: Bool) async -> Bool
+    /// Brings an app to the front (the browser, by its bundle id).
+    func bringForward(_ bundleID: String) async -> Bool
+    /// Opens one of this app's windows: at an item, or searched.
+    func showApp(_ window: AppWindow, item: UUID?, query: String?) async -> Bool
     /// Runs AppleScript: what it returned, or the error it gave.
     func appleScript(_ source: String) async -> Result<String, HostError>
     /// Gets a page directly (when the browser won't be read): its status and body.
     func fetch(_ url: URL) async -> (status: Int, body: String)?
+}
+
+/// This app's windows, as the model names them.
+public enum AppWindow: String, CaseIterable, Sendable {
+    case library, ai_library, dictate, read_aloud, transcribe, ai_listen, panel
+
+    /// The name as the model wrote it, made one of these ("chats" is the AI library).
+    public init?(said: String) {
+        let s = said.lowercased().replacingOccurrences(of: " ", with: "_").replacingOccurrences(of: "-", with: "_")
+        if let w = AppWindow(rawValue: s) { self = w; return }
+        switch s {
+        case "chats", "chat", "ai_chats", "history", "ailibrary": self = .ai_library
+        case "read", "reader", "tts", "read_aloud_window": self = .read_aloud
+        case "dictation", "dictations": self = .dictate
+        case "transcription", "transcripts", "transcriber": self = .transcribe
+        case "assistant", "ai", "listen", "settings": self = .ai_listen
+        case "skills", "menu", "home", "board": self = .panel
+        case "notes", "note", "library_window", "items": self = .library
+        default: return nil
+        }
+    }
 }
 
 public struct HostError: Error, Equatable {
@@ -127,6 +162,8 @@ public final class SkillRunner {
     /// The web search, with {query} where the words go.
     public var searchTemplate: String
     public var home: URL
+    /// Pages opened come to the front, where the user sees them (else they open behind, unless asked).
+    public var showBrowser = true
     /// How long a page may take to load before it's read anyway.
     public var loadWait: TimeInterval = 10
     public var pollInterval: TimeInterval = 0.5
@@ -152,7 +189,7 @@ public final class SkillRunner {
             return AssistantTools.json(await host.status())
         case "find_files", "list_folder", "read_file":
             return await FileSkill.run(name, arguments, home: home, host: host)
-        case "open_page", "web_search", "search_site", "read_page", "find_on_page":
+        case "open_page", "web_search", "search_site", "read_page", "find_on_page", "show_browser":
             return await BrowserSkill.run(name, arguments, runner: self)
         default:
             return nil
@@ -227,20 +264,31 @@ public enum BrowserSkill {
 
     public static func tools(sites: [Site]) -> [AssistantTools.Tool] {
         var t: [AssistantTools.Tool] = [
-            .init(name: "web_search", description: "Searches the web in the user's default browser (the results open there, where they see them) and reads back the results, with their addresses. Use it for anything current or that you don't know; then open_page a result to read it.",
-                  arguments: [("query", "string: what to search for")]),
-            .init(name: "open_page", description: "Opens a web page in the user's default browser, where they see it, and reads it: its title, address and text. With find, the page is scrolled to that text and it's highlighted.",
-                  arguments: [("url", "string: the address"), ("find", "string, optional: text to find on it")]),
+            .init(name: "web_search", description: "Searches the web in the user's default browser and reads back the results, with their addresses. Use it for anything current or that you don't know; then open_page a result to read it.",
+                  arguments: [("query", "string: what to search for"), show]),
+            .init(name: "open_page", description: "Opens a web page in the user's default browser and reads it: its title, address and text. With find, the page is scrolled to that text and it's highlighted.",
+                  arguments: [("url", "string: the address"), ("find", "string, optional: text to find on it"), show]),
             .init(name: "read_page", description: "Reads the page open in the user's browser now: its title, address and text. Long pages come in parts.",
                   arguments: [("part", "integer, optional: which part of a long page, 1 is the start")]),
             .init(name: "find_on_page", description: "Finds text on the page open in the user's browser: highlights the first place it's found, scrolled into view, and gives back each place, with the words around it.",
-                  arguments: [("text", "string: what to find")]),
+                  arguments: [("text", "string: what to find"), show]),
+            .init(name: "show_browser", description: "Brings the user's browser to the front so they see it (\"show me\"), with the page last opened, or url opened first.",
+                  arguments: [("url", "string, optional: a page to open in it first")]),
         ]
         if !sites.isEmpty {
             t.append(.init(name: "search_site", description: "Searches one of the user's sites in their browser and reads back the results. The sites: " + sites.map { "\($0.name) (\($0.host))" }.joined(separator: ", ") + ".",
-                           arguments: [("site", "string: the site's name"), ("query", "string: what to search for")]))
+                           arguments: [("site", "string: the site's name"), ("query", "string: what to search for"), show]))
         }
         return t
+    }
+
+    static let show = ("show", "boolean, optional: true brings the browser to the front so the user sees it")
+
+    /// Whether to bring the browser forward: what the model asked, else the setting.
+    static func showing(_ arguments: [String: Any], runner: SkillRunner) -> Bool {
+        if let b = arguments["show"] as? Bool { return b }
+        if let s = arguments["show"] as? String { return ["true", "yes", "1"].contains(s.lowercased()) }
+        return runner.showBrowser
     }
 
     public enum Family: Equatable, Sendable { case safari, chromium }
@@ -356,12 +404,12 @@ public enum BrowserSkill {
                 template = site.template
             }
             guard let url = Site.fill(template, query) else { return "The search address isn't a web address: \(template)" }
-            return await open(url, find: nil, runner: runner, searching: true)
+            return await open(url, find: nil, runner: runner, searching: true, show: showing(arguments, runner: runner))
         case "open_page":
             guard let raw = ToolRunTools.string(arguments["url"] ?? arguments["address"] ?? arguments["link"]), let url = FileSkill.webURL(raw) else {
                 return "Give a web address (https://…) to open."
             }
-            return await open(url, find: ToolRunTools.string(arguments["find"]), runner: runner, searching: false)
+            return await open(url, find: ToolRunTools.string(arguments["find"]), runner: runner, searching: false, show: showing(arguments, runner: runner))
         case "read_page":
             let part = Int(ToolRunTools.number(arguments["part"]) ?? 1)
             if part > 1, let page = runner.lastPage { return describe(page, part: part, opened: false) }
@@ -371,26 +419,38 @@ public enum BrowserSkill {
         case "find_on_page":
             guard let text = ToolRunTools.string(arguments["text"] ?? arguments["query"] ?? arguments["find"]) else { return "Say what to find." }
             guard let browser = await host.defaultBrowser() else { return "There's no browser." }
+            let show = arguments["show"] != nil && showing(arguments, runner: runner)
             if let script = script(running: findJS(text), in: browser.id), case .success(let out) = await host.appleScript(script), let page = Page(json: out) {
                 runner.lastPage = page
+                if show { _ = await host.bringForward(browser.id) }
                 return found(text, in: page)
             }
             // The browser can't be asked: find it in the page fetched, and open it there at the text.
             guard let page = await readFront(runner: runner) else { return "No page is open in the browser that can be read." }
             runner.lastPage = page
-            if let url = URL(string: page.url), let at = fragment(url, text) { _ = await host.open(at) }
+            if let url = URL(string: page.url), let at = fragment(url, text) { _ = await host.open(at, inFront: show) }
             return found(text, in: page)
+        case "show_browser":
+            guard let browser = await host.defaultBrowser() else { return "There's no browser." }
+            if let raw = ToolRunTools.string(arguments["url"] ?? arguments["address"]) {
+                guard let url = FileSkill.webURL(raw) else { return "Give a web address (https://…) to open." }
+                return await open(url, find: nil, runner: runner, searching: false, show: true)
+            }
+            guard await host.bringForward(browser.id) else { return "\(browser.name) didn't come to the front." }
+            return "\(browser.name) is in front now, where the user sees it" + (runner.lastPage.map { ", at \($0.title.isEmpty ? $0.url : $0.title)." } ?? ".")
         default:
             return "There is no tool called \(name)."
         }
     }
 
     /// Opens `url` in the default browser and reads it once it's loaded.
-    static func open(_ url: URL, find: String?, runner: SkillRunner, searching: Bool) async -> String {
+    static func open(_ url: URL, find: String?, runner: SkillRunner, searching: Bool, show: Bool) async -> String {
         let host = runner.host
         let target = find.flatMap { fragment(url, $0) } ?? url
-        guard await host.open(target) else { return "The browser didn't open \(url.absoluteString)." }
+        guard await host.open(target, inFront: show) else { return "The browser didn't open \(url.absoluteString)." }
         let browser = await host.defaultBrowser()
+        // Opened from a menu bar app, the browser may stay behind: brought forward to be seen.
+        if show, let browser { _ = await host.bringForward(browser.id) }
         var page: Page?
         var why: String?
         if let browser, let read = script(running: pageJS, in: browser.id) {
@@ -422,7 +482,7 @@ public enum BrowserSkill {
             p.found = f.found
         }
         runner.lastPage = p
-        var out = describe(p, part: 1, opened: true, browser: browser?.name, searching: searching)
+        var out = describe(p, part: 1, opened: true, browser: browser?.name, searching: searching, shown: show)
         if let find { out += "\n\n" + found(find, in: p) }
         return out
     }
@@ -471,9 +531,12 @@ public enum BrowserSkill {
         return URL(string: s + "#:~:text=" + t)
     }
 
-    static func describe(_ p: Page, part: Int, opened: Bool, browser: String? = nil, searching: Bool = false) -> String {
+    static func describe(_ p: Page, part: Int, opened: Bool, browser: String? = nil, searching: Bool = false, shown: Bool = true) -> String {
         var lines: [String] = []
-        if opened { lines.append("Opened in \(browser ?? "the browser"), where the user sees it.") }
+        if opened {
+            lines.append(shown ? "Opened in \(browser ?? "the browser"), in front, where the user sees it."
+                               : "Opened in \(browser ?? "the browser"), behind (show_browser brings it to the front).")
+        }
         lines.append("Title: \(p.title.isEmpty ? "(none)" : p.title)")
         lines.append("Address: \(p.url)")
         if let why = p.fetchedBecause {
