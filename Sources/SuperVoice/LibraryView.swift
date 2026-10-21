@@ -223,7 +223,7 @@ private struct Detail: View {
             HStack {
                 Text(item.kind.title.uppercased()).font(.system(size: 10, weight: .semibold)).foregroundStyle(Card.color(item.kind)).kerning(0.5)
                 Spacer()
-                Button { item.starred.toggle(); library.save(item) } label: {
+                Button { item.starred.toggle(); save() } label: {
                     Image(systemName: item.starred ? "star.fill" : "star").foregroundStyle(item.starred ? .orange : .secondary)
                 }
                 .buttonStyle(.borderless).help(item.starred ? "Unstar" : "Star")
@@ -303,7 +303,8 @@ private struct Detail: View {
     }
 
     private func save() {
-        guard library.item(item.id) != item else { return }
+        // Deleted (closing it saves on the way out): not brought back.
+        guard let current = library.item(item.id), current != item else { return }
         if item.title.trimmingCharacters(in: .whitespaces).isEmpty { item.title = LibraryRecord.title(for: item.text) }
         library.save(item)
         if let fresh = library.item(item.id) {      // its new modified date

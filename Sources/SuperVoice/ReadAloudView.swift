@@ -37,7 +37,8 @@ struct ReadAloudView: View {
                 if reader.speaking {
                     Button(reader.paused ? "Resume" : "Pause") { reader.paused ? reader.resume() : reader.pause() }
                         .buttonStyle(PillButton(tint: Palette.indigo, filled: true))
-                        .keyboardShortcut(.space, modifiers: [])
+                        .keyboardShortcut(".", modifiers: .command)
+                        .help("Pause or resume (⌘.)")
                     Button("Stop") { reader.stop() }
                         .buttonStyle(PillButton(tint: .secondary, filled: false))
                         .keyboardShortcut(.escape, modifiers: [])
