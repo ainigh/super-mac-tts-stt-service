@@ -73,8 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         image?.isTemplate = true
         item.button?.image = image
         var tip = Service.shared.isServing ? "Super Voice: serving at \(Service.shared.baseURL)" : "Super Voice: not serving"
-        if board.listening { tip += "\nAlways listening (say “mouse”, then talk: it goes in the board's note)" }
-        if AssistantModel.shared.on { tip += "\nAI Listen is on (say “Micky” or “Ollama”, then talk)" }
+        if board.listening { tip += "\nAlways listening (say “mouse”, then talk: it goes in the board's note; say “Micky”, then talk, to talk with Ollama)" }
+        if AssistantModel.shared.on { tip += AssistantModel.shared.awake ? "\nAI Listen is on: just talk" : "\nAI Listen is on (say “Micky” or “Ollama”, then talk)" }
         item.button?.toolTip = tip
     }
 

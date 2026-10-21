@@ -8,7 +8,8 @@ import VoiceCore
 /// With always listen on and the panel open ("mouse" opens it), each thing said goes in the note:
 /// under its first word when that's a command, else under "search", and then it's searched with.
 /// "mouse" said alone opens or closes the panel; "open", "copy" or "no" said alone answers what
-/// was just added. On the main thread.
+/// was just added. "Micky" starts AI Listen instead (awake: what follows is the first question).
+/// On the main thread.
 final class BoardModel: ObservableObject {
     static let shared = BoardModel()
 
@@ -179,6 +180,20 @@ final class BoardModel: ObservableObject {
         // Not what the Mac itself is saying, and not while dictating or talking to the assistant.
         let service = Service.shared
         guard !service.reader.speaking, !service.speaker.speaking, !Recorder.shared.on, !AssistantModel.shared.on else { return }
+        // "Micky" (or "Ollama"), alone or first: AI Listen starts, awake, and takes what follows.
+        // (It has the microphone from then on; always listen carries on when it turns off.)
+        switch Assistant.hear(utterance, awake: false) {
+        case .wake:
+            activity()
+            AssistantModel.shared.start(awake: true)
+            return
+        case .wakeThen(let question):
+            activity()
+            AssistantModel.shared.start(awake: true, question: question)
+            return
+        default:
+            break
+        }
         if Board.isWake(utterance) {
             activity()
             Main.delegate.togglePanel(byVoice: true)

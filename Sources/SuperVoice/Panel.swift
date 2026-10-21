@@ -49,8 +49,8 @@ struct PanelView: View {
                 Label("Listen", systemImage: board.listening ? "ear.fill" : "ear")
             }
             .buttonStyle(PillButton(tint: Palette.pink, filled: board.listening))
-            .help(board.listening ? "Always listening: say “mouse”, then talk, and it goes in the board's note. Click to stop."
-                                  : "Always listen: say “mouse”, then talk, and it goes in the board's note")
+            .help(board.listening ? "Always listening: say “mouse”, then talk, and it goes in the board's note; say “Micky”, then talk, to talk with Ollama. Click to stop."
+                                  : "Always listen: say “mouse”, then talk, and it goes in the board's note; say “Micky”, then talk, to talk with Ollama")
             if !board.listening {
                 Button {
                     board.pinned.toggle()
