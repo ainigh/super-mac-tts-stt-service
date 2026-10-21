@@ -404,6 +404,16 @@ public enum AssistantTools {
     /// The date and time written out in full, as the model is told it: "Tuesday, October 21, 2026
     /// at 3:04:05 PM PDT".
     public static func longDate(_ d: Date) -> String { longDates.string(from: d) }
+
+    static let longDays: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .full
+        f.timeStyle = .none
+        return f
+    }()
+
+    /// The day written out in full: "Tuesday, October 21, 2026".
+    public static func longDay(_ d: Date) -> String { longDays.string(from: d) }
 }
 
 // MARK: - The conversation
@@ -446,6 +456,8 @@ public final class Conversation {
     public var library: () -> [LibraryRecord]
     /// Tool Mac Tool Run, when the model may run the user's scripts and flows through it.
     public var runner: ScriptRunner?
+    /// Answer quickly: the shortest answer that does it, no working it out first (thinking off).
+    public var quick = true
     /// Rounds of tool calls per question.
     public var maxToolRounds = 6
     /// Every tool call made, for the window to show.
@@ -483,9 +495,15 @@ public final class Conversation {
         answers are read aloud by a voice, so answer the way a person speaks: short, plain sentences; no markdown, \
         no headings, no bullet lists, no code, no emoji. Keep it brief (a sentence or two unless more is really \
         asked for) and warm. What you hear was written down by speech recognition, so names and words may be \
-        slightly off: take the likely meaning, and ask when it's unclear. The date and time now is \
-        \(AssistantTools.longDate(now)); each message from the user says when it was said.
+        slightly off: take the likely meaning, and ask when it's unclear.
         """
+        if quick {
+            p += """
+             Speed matters more than polish: answer straight away, without working it out step by step or thinking \
+            out loud. Give the shortest answer that fully does what was asked, usually one sentence; no preamble, no \
+            restating the question, no offers of more help.
+            """
+        }
         let tools = self.tools
         if !tools.isEmpty {
             p += """
@@ -503,6 +521,9 @@ public final class Conversation {
             }
             p += "\n\n" + AssistantTools.manual(tools)
         }
+        // Last, and only the day: what comes before stays the same from one question to the next, so
+        // Ollama reuses what it already read of it (the exact time is on each message).
+        p += "\n\nToday is \(AssistantTools.longDay(now)); each message from the user says when it was said, to the second."
         return p
     }
 
@@ -592,14 +613,20 @@ public final class OllamaClient: LanguageModel {
     /// Let the model think before it answers (slower; off by default). Off, thinking is turned
     /// off as far as Ollama and the model allow (see `think(model:on:)`).
     public var thinking = false
+    /// How long Ollama keeps the model loaded after a question, so the next one doesn't wait for it.
+    public var keepAlive = "30m"
+    /// The longest answer with thinking off, in tokens: a safety net, the prompt asks for short.
+    public static let quickAnswerTokens = 400
     /// The last answer came with thinking although it was turned off (an older Ollama, or a
     /// model that can't stop): see `ThinkingAdvice`.
     public private(set) var thoughtAnyway = false
 
     /// The request body for /api/chat: plain messages, no tools (calls are hand-rolled), and
     /// whether to think (`think`: nil leaves the field out, for an Ollama that refuses it).
-    public static func chatBody(model: String, messages: [[String: Any]], thinking: Bool = false, sendThink: Bool = true) -> [String: Any] {
-        var body: [String: Any] = ["model": model, "messages": messages, "stream": false]
+    public static func chatBody(model: String, messages: [[String: Any]], thinking: Bool = false, sendThink: Bool = true,
+                                keepAlive: String = "30m") -> [String: Any] {
+        var body: [String: Any] = ["model": model, "messages": messages, "stream": false, "keep_alive": keepAlive]
+        if !thinking { body["options"] = ["num_predict": quickAnswerTokens] }
         if sendThink { body["think"] = think(model: model, on: thinking) }
         if !thinking, noThinkTag(model), var last = messages.last, last["role"] as? String == "user",
            let content = last["content"] as? String {
@@ -639,14 +666,20 @@ public final class OllamaClient: LanguageModel {
         let on = thinking
         let data: Data
         do {
-            data = try await post("/api/chat", Self.chatBody(model: model, messages: messages, thinking: on))
+            data = try await post("/api/chat", Self.chatBody(model: model, messages: messages, thinking: on, keepAlive: keepAlive))
         } catch AssistantError.server(let status, let message) where status == 400 && message.lowercased().contains("think") {
             // This model (or this Ollama) doesn't take `think`: ask without it.
-            data = try await post("/api/chat", Self.chatBody(model: model, messages: messages, thinking: on, sendThink: false))
+            data = try await post("/api/chat", Self.chatBody(model: model, messages: messages, thinking: on, sendThink: false, keepAlive: keepAlive))
         }
         let a = try Self.answer(data)
         thoughtAnyway = !on && a.thought
         return a.text
+    }
+
+    /// Loads `model` (a request with no prompt), so the first question doesn't wait for it.
+    public func warm(_ model: String) async {
+        guard !model.isEmpty else { return }
+        _ = try? await post("/api/generate", ["model": model, "keep_alive": keepAlive])
     }
 
     /// Ollama's version ("0.12.3").

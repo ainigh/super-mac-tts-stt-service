@@ -286,6 +286,7 @@ final class AssistantModel: ObservableObject {
         pending = []
         chat = Conversation(llm: client, model: settings.model, library: { [] })
         chat?.runner = runner
+        chat?.quick = !settings.thinking
         turns = []
         lastToolCalls = []
         if announce {
@@ -379,6 +380,7 @@ final class AssistantModel: ObservableObject {
         edit(&s)
         guard s != settings else { return }
         let moved = s.ollamaURL != settings.ollamaURL
+        let newModel = s.model != settings.model
         settings = s
         if let data = try? JSONEncoder().encode(s) { UserDefaults.standard.set(data, forKey: "assistantSettings") }
         if moved {
@@ -391,8 +393,16 @@ final class AssistantModel: ObservableObject {
         runner = Self.runner(for: s)
         chat?.runner = runner
         chat?.model = s.model
+        chat?.quick = !s.thinking
         client.thinking = s.thinking
         adviseOnThinking()
+        if newModel, on { warmUp() }
+    }
+
+    /// Gets the model loaded in Ollama now, so the first answer doesn't wait for it.
+    private func warmUp() {
+        let client = self.client, model = settings.model
+        Task.detached { await client.warm(model) }
     }
 
     /// Turns thinking on or off (the toggle in AI Listen).
@@ -441,6 +451,7 @@ final class AssistantModel: ObservableObject {
                         if !names.contains(self.settings.model), let first = names.first {
                             self.change { $0.model = first }
                         }
+                        if self.on { self.warmUp() }
                     }
                 case .failure(let error):
                     self.problem = error.localizedDescription

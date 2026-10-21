@@ -50,6 +50,10 @@ hear itself); say the next thing when it's done, or click **Stop talking**.
   bit), and anything it thinks anyway is never read out. The **Thinking** button in its window (or
   right-click the tile) turns it on. When it can't be turned off all the way (Ollama older than
   0.9, gpt-oss, or a model that thinks anyway), the window says so, with the command to run.
+- **Quick answers**: with thinking off it's asked for the shortest answer that does it, straight
+  away (and an answer can't run on). The model is loaded as AI Listen starts and kept loaded for
+  30 minutes, and what's sent first stays the same from one question to the next, so Ollama
+  doesn't read it all again: only the new question is.
 - **Ollama**: `http://127.0.0.1:11434` and the first model it has, unless you pick otherwise in the
   window. Everything stays on the Mac.
 

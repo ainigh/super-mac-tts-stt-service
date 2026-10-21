@@ -176,10 +176,12 @@ final class AssistantTests: XCTestCase {
         XCTAssertEqual(model.sent[0].messages.map { $0["role"] as? String }, ["system", "user"])
         XCTAssertTrue(((model.sent[0].messages[0]["content"] as? String) ?? "").contains("Micky"))
         XCTAssertTrue(((model.sent[0].messages[0]["content"] as? String) ?? "").contains("- list_chats:"))
-        // The date and time, in full, in the system prompt and on each message.
+        // The day in the system prompt (so it stays the same, and Ollama reuses it), the time in full on each message.
         let when = AssistantTools.longDate(Date(timeIntervalSince1970: 1_700_000_000))
         XCTAssertTrue(when.contains("2023"))
-        XCTAssertTrue(((model.sent[0].messages[0]["content"] as? String) ?? "").contains(when))
+        let system = (model.sent[0].messages[0]["content"] as? String) ?? ""
+        XCTAssertTrue(system.hasSuffix("Today is \(AssistantTools.longDay(Date(timeIntervalSince1970: 1_700_000_000))); each message from the user says when it was said, to the second."))
+        XCTAssertFalse(system.contains(when))
         XCTAssertEqual(model.sent[0].messages[1]["content"] as? String, "What did I say about the budget?\n\n(said on \(when))")
         XCTAssertEqual(chat.turns[0].text, "What did I say about the budget?")
         // The call and its result ride as plain messages: no Ollama tool calling.
@@ -262,6 +264,21 @@ final class AssistantTests: XCTestCase {
         let qwenOn = OllamaClient.chatBody(model: "qwen3:8b", messages: hi, thinking: true)["messages"] as? [[String: Any]]
         XCTAssertEqual(qwenOn?.last?["content"] as? String, "hi")
         XCTAssertNotNil(try JSONSerialization.data(withJSONObject: OllamaClient.chatBody(model: "qwen3", messages: hi)))
+    }
+
+    func testQuickAnswersAskForLittleAndKeepThePromptSteady() {
+        let chat = Conversation(llm: FakeModel(), model: "m", library: { [] })
+        let morning = chat.systemPrompt(now: Date(timeIntervalSince1970: 1_700_000_000))
+        XCTAssertTrue(morning.contains("Speed matters more than polish"))
+        XCTAssertEqual(chat.systemPrompt(now: Date(timeIntervalSince1970: 1_700_000_059)), morning)   // a minute on: the same
+        chat.quick = false
+        XCTAssertFalse(chat.systemPrompt().contains("Speed matters"))
+
+        let hi: [[String: Any]] = [["role": "user", "content": "hi"]]
+        let quick = OllamaClient.chatBody(model: "m", messages: hi)
+        XCTAssertEqual((quick["options"] as? [String: Any])?["num_predict"] as? Int, OllamaClient.quickAnswerTokens)
+        XCTAssertEqual(quick["keep_alive"] as? String, "30m")
+        XCTAssertNil(OllamaClient.chatBody(model: "m", messages: hi, thinking: true)["options"])
     }
 
     func testThinkingIsTakenOutOfTheAnswer() throws {
