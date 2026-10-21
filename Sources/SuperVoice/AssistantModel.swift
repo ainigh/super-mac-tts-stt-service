@@ -219,7 +219,8 @@ final class AssistantModel: ObservableObject {
         }
         listener.screen = { samples, playing in
             if playing { return await VoicePrints.shared.isTheirs(samples) ?? false }
-            await VoicePrints.shared.learnUser(samples)
+            // Yours: learned on the side, so writing it down doesn't wait.
+            Task.detached(priority: .utility) { await VoicePrints.shared.learnUser(samples) }
             return false
         }
         listener.$text.receive(on: DispatchQueue.main).sink { [weak self] t in
@@ -385,6 +386,7 @@ final class AssistantModel: ObservableObject {
 
     /// Always listening, while off: only "Tom" counts, alone or first.
     private func wakeHeard(_ utterance: String) {
+        NSLog("Always listen heard: %@ (on: %d, listen: %d, mic busy: %d)", utterance, on ? 1 : 0, alwaysListen ? 1 : 0, micBusy ? 1 : 0)
         guard !on, alwaysListen, !micBusy else { return }
         switch Assistant.hear(utterance, awake: false) {
         case .wake, .command(.newChat): start()
@@ -406,6 +408,7 @@ final class AssistantModel: ObservableObject {
     }
 
     func heard(_ utterance: String) {
+        NSLog("AI Listen heard: %@ (speaking: %d)", utterance, voice.speaking ? 1 : 0)
         guard on, !micBusy else { return }
         var said = utterance
         if settings.bargeIn, voice.speaking || Date() < echoUntil {
@@ -870,6 +873,7 @@ final class AssistantModel: ObservableObject {
     /// The voices' prints, so what they say isn't taken for yours.
     private func enrollVoices() {
         guard settings.voicePrints else { return }
+        VoicePrints.shared.prepare()
         VoicePrints.shared.enroll(Service.shared.voice)
         if teamOn { VoicePrints.shared.enroll(jerryVoice) }
     }

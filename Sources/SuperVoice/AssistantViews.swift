@@ -9,6 +9,7 @@ struct AssistantView: View {
     @ObservedObject var ai = AssistantModel.shared
     @ObservedObject var voice = AssistantModel.shared.voice
     @ObservedObject var listener = AssistantModel.shared.listener
+    @ObservedObject var wakeListener = AssistantModel.shared.wakeListener
     @ObservedObject var prints = VoicePrints.shared
     @ObservedObject var board = SkillsModel.shared
     @State private var typed = ""
@@ -134,6 +135,15 @@ struct AssistantView: View {
                     if !ai.lastToolCalls.isEmpty, !ai.thinking {
                         Text("Used: " + Self.toolNames(ai.lastToolCalls))
                             .font(.system(size: 11)).foregroundStyle(.tertiary)
+                    }
+                    if !ai.on, ai.alwaysListen {
+                        HStack(spacing: 6) {
+                            Image(systemName: "ear").foregroundStyle(Palette.pink)
+                            Text(wakeListener.on ? (ai.wakeHearing.isEmpty ? "Listening for “\(Assistant.name)”…" : "Listening for “\(Assistant.name)”: “\(ai.wakeHearing)”")
+                                                    : "Listen is on, but the microphone isn't open for “\(Assistant.name)” yet")
+                                .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                        .id("hearing")
                     }
                     if ai.on, !ai.hearing.isEmpty {
                         HStack(spacing: 6) {

@@ -18,6 +18,8 @@ final class VoicePrints: ObservableObject {
     @Published private(set) var state: ModelState = .notLoaded
 
     private var load: Task<CampPlusEmbedder, Error>?
+    /// The model, once it's loaded (nothing waits for it: until then, nothing can be told).
+    private var model: CampPlusEmbedder?
     private let lock = NSLock()
     /// Each voice's print, by its id.
     private var theirs: [String: [Float]] = [:]
@@ -48,7 +50,11 @@ final class VoicePrints: ObservableObject {
             let result = await task.result
             guard let self else { return }
             switch result {
-            case .success: self.main { self.state = .ready }
+            case .success(let model):
+                self.lock.lock()
+                self.model = model
+                self.lock.unlock()
+                self.main { self.state = .ready }
             case .failure(let error):
                 self.lock.lock()
                 self.load = nil
@@ -59,11 +65,20 @@ final class VoicePrints: ObservableObject {
         return task
     }
 
-    /// The print of 16 kHz audio; nil when it's too short or the model isn't there.
+    /// The print of 16 kHz audio; nil when it's too short or the model isn't loaded yet (it never
+    /// waits for it: a phrase mustn't wait on a download).
     private func embedding(of samples: [Float]) async -> [Float]? {
         guard Double(samples.count) >= Self.minSeconds * Double(PCM.listenRate) else { return nil }
-        guard let model = try? await embedder().value else { return nil }
+        lock.lock()
+        let model = self.model
+        lock.unlock()
+        guard let model else { return nil }
         return try? await model.embed(audio: samples)
+    }
+
+    /// Starts getting the model, if it isn't here yet.
+    func prepare() {
+        _ = embedder()
     }
 
     /// Enrolls `voice` (once): what it sounds like saying the sample. Main thread.
@@ -76,9 +91,11 @@ final class VoicePrints: ObservableObject {
         Task.detached(priority: .utility) { [weak self] in
             guard let self else { return }
             var print: [Float]?
-            if let audio = try? await Neural.shared.speak(Self.sample, voice: voice, speed: 1) {
+            // Enrolling does wait for the model (it's the one thing that may).
+            if let model = try? await self.embedder().value,
+               let audio = try? await Neural.shared.speak(Self.sample, voice: voice, speed: 1) {
                 let heard = PCM.resample(audio, from: Double(PCM.speakRate), to: Double(PCM.listenRate))
-                print = await self.embedding(of: heard)
+                print = try? await model.embed(audio: heard)
             }
             self.lock.lock()
             self.enrolling.remove(voice.id)

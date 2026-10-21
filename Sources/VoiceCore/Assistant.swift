@@ -9,7 +9,7 @@ public enum Assistant {
 
     /// What wakes it, as the recognizer tends to write it (any of these, alone or first). Nothing
     /// else does: always listening, only "Tom" is ever acted on.
-    public static let wakeWords: [[String]] = [["tom"], ["thom"], ["tomm"], ["tum"]]
+    public static let wakeWords: [[String]] = [["tom"], ["thom"], ["tomm"], ["tum"], ["tam"], ["dom"], ["tommy"]]
     /// "Hey Tom", "okay Tom": these may come before the wake word.
     static let greetings: Set<String> = ["hey", "hi", "hello", "ok", "okay", "yo"]
 
