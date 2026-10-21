@@ -147,7 +147,7 @@ final class AssistantTests: XCTestCase {
         XCTAssertEqual(AssistantTools.calls(in: #"{"name": "list_library", "parameters": {"kind": "note"}}"#), [.init(name: "list_library", argumentsJSON: #"{"kind":"note"}"#)])
         XCTAssertEqual(AssistantTools.calls(in: #"{"tool": "list_library", "query": "milk"}"#), [.init(name: "list_library", argumentsJSON: #"{"query":"milk"}"#)])
         XCTAssertEqual(AssistantTools.calls(in: #"{"tool": "list_chats"}"#), [.init(name: "list_chats", argumentsJSON: "{}")])
-        XCTAssertEqual(AssistantTools.calls(in: #"{"tool": "x", "arguments": "{"a": "b}"}"}"#)[0].arguments["a"] as? String, "b}")
+        XCTAssertEqual(AssistantTools.calls(in: #"{"tool": "x", "arguments": "{\"a\": \"b}\"}"}"#).first?.arguments["a"] as? String, "b}")
         XCTAssertEqual(AssistantTools.calls(in: #"{"tool": "a"} and {"tool": "b"}"#).map(\.name), ["a", "b"])
         // Not calls.
         XCTAssertEqual(AssistantTools.calls(in: "Lima is the capital of Peru."), [])
