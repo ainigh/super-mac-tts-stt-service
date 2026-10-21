@@ -247,6 +247,17 @@ public enum AssistantTools {
     }()
 
     public static func date(_ d: Date) -> String { dates.string(from: d) }
+
+    static let longDates: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .full
+        f.timeStyle = .long
+        return f
+    }()
+
+    /// The date and time written out in full, as the model is told it: "Tuesday, October 21, 2026
+    /// at 3:04:05 PM PDT".
+    public static func longDate(_ d: Date) -> String { longDates.string(from: d) }
 }
 
 // MARK: - The conversation
@@ -343,7 +354,7 @@ public final class Conversation {
         no headings, no bullet lists, no code, no emoji. Keep it brief (a sentence or two unless more is really \
         asked for) and warm. What you hear was written down by speech recognition, so names and words may be \
         slightly off: take the likely meaning, and ask when it's unclear. The date and time now is \
-        \(AssistantTools.date(now)).
+        \(AssistantTools.longDate(now)); each message from the user says when it was said.
         """
         if toolsSupported {
             p += """
@@ -361,7 +372,7 @@ public final class Conversation {
     public func ask(_ text: String, now: Date = Date()) async throws -> String {
         let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
         turns.append(ChatTurn(role: .user, text: question, time: now))
-        wire.append(["role": "user", "content": question])
+        wire.append(["role": "user", "content": Self.stamped(question, now: now)])
         let before = wire.count - 1
         do {
             var content = ""
@@ -396,6 +407,11 @@ public final class Conversation {
             turns.removeLast()
             throw error
         }
+    }
+
+    /// A question as the model gets it: with the date and time it was said, written out in full.
+    public static func stamped(_ question: String, now: Date) -> String {
+        "\(question)\n\n(said on \(AssistantTools.longDate(now)))"
     }
 
     private func send(now: Date) async throws -> ModelReply {

@@ -145,6 +145,12 @@ final class AssistantTests: XCTestCase {
         XCTAssertEqual(model.sent[0].tools?.count, 4)
         XCTAssertEqual(model.sent[0].messages.map { $0["role"] as? String }, ["system", "user"])
         XCTAssertTrue(((model.sent[0].messages[0]["content"] as? String) ?? "").contains("Micky"))
+        // The date and time, in full, in the system prompt and on each message.
+        let when = AssistantTools.longDate(Date(timeIntervalSince1970: 1_700_000_000))
+        XCTAssertTrue(when.contains("2023"))
+        XCTAssertTrue(((model.sent[0].messages[0]["content"] as? String) ?? "").contains(when))
+        XCTAssertEqual(model.sent[0].messages[1]["content"] as? String, "What did I say about the budget?\n\n(said on \(when))")
+        XCTAssertEqual(chat.turns[0].text, "What did I say about the budget?")
         XCTAssertEqual(model.sent[1].messages.map { $0["role"] as? String }, ["system", "user", "assistant", "tool"])
         XCTAssertEqual(model.sent[1].messages[3]["tool_name"] as? String, "list_library")
         XCTAssertTrue(((model.sent[1].messages[3]["content"] as? String) ?? "").contains("meeting.mp3"))
