@@ -400,7 +400,7 @@ struct ChatsView: View {
                             in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             VStack(alignment: .leading, spacing: 1) {
                 Text("AI Library").font(.system(size: 18, weight: .semibold))
-                Text("\(library.items.filter { $0.kind == .chat }.count) chats with \(Assistant.name) · each new chat starts fresh; ask, and it looks these up")
+                Text("\(counted(library.items.filter { $0.kind == .chat }.count, "chat")) with \(Assistant.name) · each new chat starts fresh; ask, and it looks these up")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
             Spacer()
@@ -499,7 +499,7 @@ private struct ChatRow: View {
             if chat.starred { Image(systemName: "star.fill").font(.system(size: 10)).foregroundStyle(.orange) }
             VStack(alignment: .trailing, spacing: 2) {
                 Text(ChatBubble.time.string(from: chat.created))
-                Text("\(chat.turns?.count ?? 0) turns")
+                Text(counted(chat.turns?.count ?? 0, "turn"))
             }
             .font(.system(size: 10)).foregroundStyle(.tertiary)
         }
@@ -540,7 +540,7 @@ private struct ChatDetail: View {
                 Button { close() } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).keyboardShortcut(.escape, modifiers: [])
             }
             Text(chat.title).font(.system(size: 17, weight: .semibold))
-            Text("\(Files.dated.string(from: chat.created)) · \(chat.turns?.count ?? 0) turns · \(chat.wordCount) words")
+            Text("\(Files.dated.string(from: chat.created)) · \(counted(chat.turns?.count ?? 0, "turn")) · \(counted(chat.wordCount, "word"))")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             if reader.speaking { NowReading(reader: reader) }
             ScrollView {

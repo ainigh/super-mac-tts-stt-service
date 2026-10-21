@@ -8,6 +8,8 @@ struct PanelView: View {
     @EnvironmentObject var service: Service
     @ObservedObject var board = BoardModel.shared
     @ObservedObject var assistant = AssistantModel.shared
+    /// Watched, so the counts on the tiles change while the panel's open.
+    @ObservedObject var library = Library.shared
     var close: () -> Void
 
     var body: some View {
@@ -99,7 +101,7 @@ struct PanelView: View {
             ToolTile(title: "Transcribe", detail: "An audio file to text", symbol: "waveform.badge.plus", colors: [Palette.teal, Palette.blue]) {
                 close(); Windows.show(.transcribe)
             }
-            ToolTile(title: "Library", detail: "\(Library.shared.items.filter { $0.kind != .chat }.count) saved", symbol: "square.grid.2x2.fill", colors: [Palette.green, Palette.teal]) {
+            ToolTile(title: "Library", detail: kept == 0 ? "Nothing kept yet" : "\(kept) kept", symbol: "square.grid.2x2.fill", colors: [Palette.green, Palette.teal]) {
                 close(); Windows.show(.library)
             }
             ToolTile(title: "AI listen", detail: assistant.on ? "On: just talk (click to stop)" : "Talk with Ollama", symbol: assistant.on ? "stop.fill" : "sparkles",
@@ -113,11 +115,14 @@ struct PanelView: View {
                 Button("Open AI Listen window") { close(); Windows.show(.assistant) }
                 Button(assistant.on ? "Stop" : "Start, listening for “\(Assistant.name)”") { close(); assistant.toggle() }
             }
-            ToolTile(title: "AI library", detail: "\(Library.shared.items.filter { $0.kind == .chat }.count) chats", symbol: "bubble.left.and.text.bubble.right.fill", colors: [Palette.blue, Palette.violet]) {
+            ToolTile(title: "AI library", detail: chats == 0 ? "No chats yet" : counted(chats, "chat"), symbol: "bubble.left.and.text.bubble.right.fill", colors: [Palette.blue, Palette.violet]) {
                 close(); Windows.show(.chats)
             }
         }
     }
+
+    private var kept: Int { library.items.filter { $0.kind != .chat }.count }
+    private var chats: Int { library.items.filter { $0.kind == .chat }.count }
 
     // MARK: Voice
 
@@ -335,6 +340,11 @@ struct ModelBadge: View {
         case .notLoaded: return "\(name) loads on first use"
         }
     }
+}
+
+/// "1 word", "3 words".
+func counted(_ n: Int, _ thing: String) -> String {
+    "\(n) \(thing)\(n == 1 ? "" : "s")"
 }
 
 struct SectionTitle: View {

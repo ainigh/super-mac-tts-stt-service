@@ -339,7 +339,7 @@ struct UpdateButton: View {
                 Button { updater.check(userInitiated: true) } label: {
                     HStack(spacing: 4) {
                         Text("v\(Service.version)")
-                        Image(systemName: "arrow.clockwise")
+                        Image(systemName: updater.state == .upToDate ? "checkmark.circle" : "arrow.clockwise")
                     }
                 }
                 .buttonStyle(.borderless)

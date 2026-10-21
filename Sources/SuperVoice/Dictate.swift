@@ -327,7 +327,7 @@ struct DictateView: View {
                 .disabled(busy || draft.isEmpty)
                 Spacer()
                 if let note { Text(note).font(.system(size: 11)).foregroundStyle(.secondary) }
-                Text("\(shown.split(whereSeparator: \.isWhitespace).count) words").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(counted(shown.split(whereSeparator: \.isWhitespace).count, "word")).font(.system(size: 11)).foregroundStyle(.secondary)
                     .monospacedDigit()
             }
         }

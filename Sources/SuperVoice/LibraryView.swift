@@ -190,7 +190,7 @@ private struct Card: View {
                 Text(Files.dated.string(from: item.created))
                 Spacer()
                 if let d = item.duration { Text(Captions.clock(d)) }
-                Text("\(item.wordCount) words")
+                Text(counted(item.wordCount, "word"))
             }
             .font(.system(size: 10))
             .foregroundStyle(.tertiary)
@@ -288,7 +288,7 @@ private struct Detail: View {
         var parts = [Files.dated.string(from: item.created)]
         if let d = item.duration { parts.append(Captions.clock(d)) }
         if let s = item.source { parts.append(s) }
-        parts.append("\(item.wordCount) words")
+        parts.append(counted(item.wordCount, "word"))
         return parts.joined(separator: " · ")
     }
 
