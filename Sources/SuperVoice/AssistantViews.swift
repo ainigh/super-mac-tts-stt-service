@@ -33,6 +33,7 @@ struct AssistantView: View {
                 }
             }
             controls
+            if let advice = ai.thinkingAdvice { ThinkingNotice(advice: advice) }
             transcript
             typeBar
             settings
@@ -69,6 +70,12 @@ struct AssistantView: View {
                 Button("Stop talking") { voice.stop() }
                     .buttonStyle(PillButton(tint: .secondary, filled: false))
             }
+            Button { ai.setThinking(!ai.settings.thinking) } label: {
+                Label("Thinking", systemImage: "brain")
+            }
+            .buttonStyle(PillButton(tint: Palette.violet, filled: ai.settings.thinking))
+            .help(ai.settings.thinking ? "Thinking is on: the model thinks before it answers (slower). Click to turn it off."
+                                       : "Thinking is off: quicker answers. Click to let the model think first.")
             Button("New chat") { ai.newChat() }
                 .buttonStyle(PillButton(tint: .secondary, filled: false))
                 .disabled(ai.turns.isEmpty)
@@ -278,6 +285,43 @@ struct AssistantView: View {
     static func toolNames(_ tools: [String]) -> String {
         var seen = Set<String>()
         return tools.map(toolName).filter { seen.insert($0).inserted }.joined(separator: ", ")
+    }
+}
+
+/// Thinking is off but can't be turned off all the way: why, and the command that does the rest.
+private struct ThinkingNotice: View {
+    var advice: (text: String, command: String?)
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "brain").foregroundStyle(Palette.violet)
+                Text(advice.text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+            }
+            if let command = advice.command {
+                HStack(spacing: 8) {
+                    Text(command)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .padding(.horizontal, 8).padding(.vertical, 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    Button {
+                        Service.shared.copy(command)
+                        copied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                    } label: {
+                        Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    }
+                    .buttonStyle(PillButton(tint: Palette.violet, filled: true))
+                    .help("Copy it, then paste it into Terminal")
+                }
+            }
+        }
+        .padding(10)
+        .background(Palette.violet.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 

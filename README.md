@@ -45,6 +45,11 @@ hear itself); say the next thing when it's done, or click **Stop talking**.
   list and run your scripts and flows ("run my backup script"): every run shows a card on the Mac
   and waits for you to click **Run**. Its address (`http://127.0.0.1:8768`) is in the window's
   settings; clear it and the model can't.
+- **Thinking**: off by default, for quick answers: the model is asked not to think (Ollama's
+  `think: false`; "/no_think" for Qwen 3; as little as it goes for gpt-oss, which always thinks a
+  bit), and anything it thinks anyway is never read out. The **Thinking** button in its window (or
+  right-click the tile) turns it on. When it can't be turned off all the way (Ollama older than
+  0.9, gpt-oss, or a model that thinks anyway), the window says so, with the command to run.
 - **Ollama**: `http://127.0.0.1:11434` and the first model it has, unless you pick otherwise in the
   window. Everything stays on the Mac.
 

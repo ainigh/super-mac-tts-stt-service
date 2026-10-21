@@ -116,6 +116,7 @@ struct PanelView: View {
             .contextMenu {
                 Button("Open AI Listen window") { close(); Windows.show(.assistant) }
                 Button(assistant.on ? "Stop" : "Start, listening for “\(Assistant.name)”") { close(); assistant.toggle() }
+                Toggle("Let the model think (slower)", isOn: Binding(get: { assistant.settings.thinking }, set: { assistant.setThinking($0) }))
             }
             ToolTile(title: "AI library", detail: chats == 0 ? "No chats yet" : counted(chats, "chat"), symbol: "bubble.left.and.text.bubble.right.fill", colors: [Palette.blue, Palette.violet]) {
                 close(); Windows.show(.chats)

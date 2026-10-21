@@ -12,6 +12,21 @@ struct AssistantSettings: Codable, Equatable {
     var idleSeconds: Double = 60
     /// Tool Mac Tool Run, which runs the user's scripts for the model; empty: not offered.
     var toolRunURL = ToolRunClient.defaultURL
+    /// Let the model think before answering (slower). Off: turned off as far as it goes.
+    var thinking = false
+
+    init() {}
+
+    // Settings saved before a field existed still load, taking its default.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AssistantSettings()
+        ollamaURL = try c.decodeIfPresent(String.self, forKey: .ollamaURL) ?? d.ollamaURL
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? d.model
+        idleSeconds = try c.decodeIfPresent(Double.self, forKey: .idleSeconds) ?? d.idleSeconds
+        toolRunURL = try c.decodeIfPresent(String.self, forKey: .toolRunURL) ?? d.toolRunURL
+        thinking = try c.decodeIfPresent(Bool.self, forKey: .thinking) ?? d.thinking
+    }
 }
 
 /// AI Listen: a conversation with Ollama by voice. Started, it listens for "Micky" or "Ollama";
@@ -51,6 +66,10 @@ final class AssistantModel: ObservableObject {
     @Published private(set) var idleLeft: Double?
     /// The tools the model called for the last answer.
     @Published private(set) var lastToolCalls: [String] = []
+    /// Thinking is off but couldn't be turned off all the way: what to do, and the command.
+    @Published private(set) var thinkingAdvice: (text: String, command: String?)?
+    /// Ollama's version, once asked.
+    private var ollamaVersion: String?
     /// Little sounds when it wakes and hears.
     @Published var sounds: Bool { didSet { UserDefaults.standard.set(sounds, forKey: "assistantSounds") } }
 
@@ -83,6 +102,7 @@ final class AssistantModel: ObservableObject {
         settings = loaded
         sounds = defaults.object(forKey: "assistantSounds") as? Bool ?? true
         client = OllamaClient(baseURL: loaded.ollamaURL)
+        client.thinking = loaded.thinking
         runner = Self.runner(for: loaded)
         listener.onUtterance = { [weak self] said in self?.heard(said) }
         listener.$text.receive(on: DispatchQueue.main).sink { [weak self] t in
@@ -307,6 +327,7 @@ final class AssistantModel: ObservableObject {
                 self.turns = chat.turns
                 self.lastToolCalls = chat.toolCalls
                 self.activity()
+                self.adviseOnThinking()
                 switch result {
                 case .success(let answer):
                     self.save(chat)
@@ -362,6 +383,7 @@ final class AssistantModel: ObservableObject {
         if let data = try? JSONEncoder().encode(s) { UserDefaults.standard.set(data, forKey: "assistantSettings") }
         if moved {
             client = OllamaClient(baseURL: s.ollamaURL)
+            ollamaVersion = nil
             chat?.llm = client
             models = []
             refreshModels()
@@ -369,6 +391,20 @@ final class AssistantModel: ObservableObject {
         runner = Self.runner(for: s)
         chat?.runner = runner
         chat?.model = s.model
+        client.thinking = s.thinking
+        adviseOnThinking()
+    }
+
+    /// Turns thinking on or off (the toggle in AI Listen).
+    func setThinking(_ on: Bool) {
+        change { $0.thinking = on }
+        say(on ? "Thinking on: slower, more careful answers" : "Thinking off")
+    }
+
+    /// With thinking off, says what's left to do when it can't be turned off all the way.
+    private func adviseOnThinking() {
+        thinkingAdvice = settings.thinking ? nil
+            : ThinkingAdvice.advice(model: settings.model, version: ollamaVersion, thoughtAnyway: client.thoughtAnyway)
     }
 
     static func runner(for s: AssistantSettings) -> ToolRunClient? {
@@ -384,6 +420,12 @@ final class AssistantModel: ObservableObject {
             do {
                 let names = try await client.models()
                 result = .success(names)
+                let version = try? await client.version()
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, client === self.client else { return }
+                    self.ollamaVersion = version
+                    self.adviseOnThinking()
+                }
             } catch {
                 result = .failure(error)
             }

@@ -248,4 +248,43 @@ final class AssistantTests: XCTestCase {
         XCTAssertEqual(OllamaClient(baseURL: "localhost:11434/").baseURL.absoluteString, "http://localhost:11434")
         XCTAssertEqual(OllamaClient(baseURL: "  ").baseURL.absoluteString, OllamaClient.defaultURL)
     }
+
+    func testThinkingIsOffUnlessAsked() throws {
+        let hi: [[String: Any]] = [["role": "user", "content": "hi"]]
+        XCTAssertEqual(OllamaClient.chatBody(model: "llama3.2", messages: hi)["think"] as? Bool, false)
+        XCTAssertEqual(OllamaClient.chatBody(model: "llama3.2", messages: hi, thinking: true)["think"] as? Bool, true)
+        XCTAssertNil(OllamaClient.chatBody(model: "llama3.2", messages: hi, sendThink: false)["think"])
+        // gpt-oss can't stop: as little as it goes.
+        XCTAssertEqual(OllamaClient.chatBody(model: "gpt-oss:20b", messages: hi)["think"] as? String, "low")
+        // Qwen 3 is told in the message too, off only.
+        let qwen = OllamaClient.chatBody(model: "qwen3:8b", messages: hi)["messages"] as? [[String: Any]]
+        XCTAssertEqual(qwen?.last?["content"] as? String, "hi /no_think")
+        let qwenOn = OllamaClient.chatBody(model: "qwen3:8b", messages: hi, thinking: true)["messages"] as? [[String: Any]]
+        XCTAssertEqual(qwenOn?.last?["content"] as? String, "hi")
+        XCTAssertNotNil(try JSONSerialization.data(withJSONObject: OllamaClient.chatBody(model: "qwen3", messages: hi)))
+    }
+
+    func testThinkingIsTakenOutOfTheAnswer() throws {
+        let tagged = try OllamaClient.answer(Data(#"{"message":{"content":"<think>Hmm, cats.</think>\n\nTry Miso."}}"#.utf8))
+        XCTAssertEqual(tagged.text, "Try Miso.")
+        XCTAssertTrue(tagged.thought)
+        let field = try OllamaClient.answer(Data(#"{"message":{"content":"Miso.","thinking":"cats..."}}"#.utf8))
+        XCTAssertEqual(field.text, "Miso.")
+        XCTAssertTrue(field.thought)
+        let plain = try OllamaClient.answer(Data(#"{"message":{"content":"Miso.","thinking":""}}"#.utf8))
+        XCTAssertFalse(plain.thought)
+        XCTAssertEqual(try OllamaClient.reply(Data(#"{"message":{"content":"<think>never closed"}}"#.utf8)), "")
+    }
+
+    func testThinkingAdviceSaysWhatToRun() {
+        XCTAssertTrue(ThinkingAdvice.isOlder("0.6.8", than: [0, 9, 0]))
+        XCTAssertFalse(ThinkingAdvice.isOlder("0.12.3", than: [0, 9, 0]))
+        XCTAssertFalse(ThinkingAdvice.isOlder("0.9.0-rc1", than: [0, 9, 0]))
+        XCTAssertFalse(ThinkingAdvice.isOlder("", than: [0, 9, 0]))
+        XCTAssertEqual(ThinkingAdvice.advice(model: "qwen3", version: "0.6.8", thoughtAnyway: false)?.command?.contains("brew upgrade ollama"), true)
+        XCTAssertEqual(ThinkingAdvice.advice(model: "gpt-oss:20b", version: "0.12.0", thoughtAnyway: false)?.command, "ollama pull llama3.2")
+        XCTAssertNotNil(ThinkingAdvice.advice(model: "qwen3", version: "0.12.0", thoughtAnyway: true))
+        XCTAssertNil(ThinkingAdvice.advice(model: "qwen3", version: "0.12.0", thoughtAnyway: false))
+        XCTAssertNil(ThinkingAdvice.advice(model: "llama3.2", version: nil, thoughtAnyway: false))
+    }
 }

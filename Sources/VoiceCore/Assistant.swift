@@ -589,20 +589,71 @@ public final class OllamaClient: LanguageModel {
         self.baseURL = URL(string: s) ?? URL(string: Self.defaultURL)!
     }
 
-    /// The request body for /api/chat: plain messages, no tools (calls are hand-rolled).
-    public static func chatBody(model: String, messages: [[String: Any]]) -> [String: Any] {
-        ["model": model, "messages": messages, "stream": false]
+    /// Let the model think before it answers (slower; off by default). Off, thinking is turned
+    /// off as far as Ollama and the model allow (see `think(model:on:)`).
+    public var thinking = false
+    /// The last answer came with thinking although it was turned off (an older Ollama, or a
+    /// model that can't stop): see `ThinkingAdvice`.
+    public private(set) var thoughtAnyway = false
+
+    /// The request body for /api/chat: plain messages, no tools (calls are hand-rolled), and
+    /// whether to think (`think`: nil leaves the field out, for an Ollama that refuses it).
+    public static func chatBody(model: String, messages: [[String: Any]], thinking: Bool = false, sendThink: Bool = true) -> [String: Any] {
+        var body: [String: Any] = ["model": model, "messages": messages, "stream": false]
+        if sendThink { body["think"] = think(model: model, on: thinking) }
+        if !thinking, noThinkTag(model), var last = messages.last, last["role"] as? String == "user",
+           let content = last["content"] as? String {
+            // Qwen 3 also takes "/no_think" in what's said, which works even where `think` doesn't.
+            last["content"] = content + " /no_think"
+            body["messages"] = Array(messages.dropLast()) + [last]
+        }
+        return body
     }
 
-    /// Reads /api/chat's answer: the message's text.
+    /// Ollama's `think`: true or false, except gpt-oss, which always thinks and takes a level
+    /// ("low" is as little as it goes).
+    public static func think(model: String, on: Bool) -> Any {
+        if model.lowercased().contains("gpt-oss") { return on ? "medium" : "low" }
+        return on
+    }
+
+    /// Models that also understand "/no_think" in the message.
+    static func noThinkTag(_ model: String) -> Bool { model.lowercased().contains("qwen3") }
+
+    /// Reads /api/chat's answer: the message's text (any <think>…</think> taken out).
     public static func reply(_ data: Data) throws -> String {
+        try answer(data).text
+    }
+
+    /// The answer's text, and whether it came with thinking (Ollama's `thinking`, or <think> in it).
+    public static func answer(_ data: Data) throws -> (text: String, thought: Bool) {
         guard let o = JSON.object(data), let message = o["message"] as? [String: Any] else { throw AssistantError.badReply }
-        return (message["content"] as? String) ?? ""
+        let content = (message["content"] as? String) ?? ""
+        let thinking = (message["thinking"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cleaned = content.replacingOccurrences(of: #"<think>[\s\S]*?(</think>|$)"#, with: "", options: .regularExpression)
+        let thought = !thinking.isEmpty || cleaned != content
+        return (thought ? cleaned.trimmingCharacters(in: .whitespacesAndNewlines) : content, thought)
     }
 
     public func chat(model: String, messages: [[String: Any]]) async throws -> String {
-        let data = try await post("/api/chat", Self.chatBody(model: model, messages: messages))
-        return try Self.reply(data)
+        let on = thinking
+        let data: Data
+        do {
+            data = try await post("/api/chat", Self.chatBody(model: model, messages: messages, thinking: on))
+        } catch AssistantError.server(let status, let message) where status == 400 && message.lowercased().contains("think") {
+            // This model (or this Ollama) doesn't take `think`: ask without it.
+            data = try await post("/api/chat", Self.chatBody(model: model, messages: messages, thinking: on, sendThink: false))
+        }
+        let a = try Self.answer(data)
+        thoughtAnyway = !on && a.thought
+        return a.text
+    }
+
+    /// Ollama's version ("0.12.3").
+    public func version() async throws -> String {
+        let data = try await get("/api/version")
+        guard let v = JSON.object(data)?["version"] as? String else { throw AssistantError.badReply }
+        return v
     }
 
     /// The models Ollama has, as named there ("llama3.2:latest").
@@ -644,5 +695,41 @@ public final class OllamaClient: LanguageModel {
             throw AssistantError.server(status, message)
         }
         return data
+    }
+}
+
+/// What to tell the user when thinking is off but can't be turned off all the way, with the
+/// command that does the rest (nil: nothing to do).
+public enum ThinkingAdvice {
+    /// Ollama turns thinking off (`think: false`) from 0.9.0 on.
+    public static let firstVersion = [0, 9, 0]
+
+    public static func advice(model: String, version: String?, thoughtAnyway: Bool) -> (text: String, command: String?)? {
+        if let version, isOlder(version, than: firstVersion) {
+            return ("Ollama \(version) can't turn thinking off; 0.9 or newer can. Update it, then start it again:",
+                    "brew upgrade ollama || curl -fsSL https://ollama.com/install.sh | sh")
+        }
+        if model.lowercased().contains("gpt-oss") {
+            return ("\(model) always thinks a little (it's set to as little as it goes). For no thinking at all, use another model:",
+                    "ollama pull llama3.2")
+        }
+        if thoughtAnyway {
+            return ("\(model) thought anyway (what it thought isn't read out). Updating Ollama usually fixes it:",
+                    "brew upgrade ollama || curl -fsSL https://ollama.com/install.sh | sh")
+        }
+        return nil
+    }
+
+    /// "0.6.8" against [0, 9, 0] (anything after the numbers, like "-rc1", is ignored).
+    public static func isOlder(_ version: String, than other: [Int]) -> Bool {
+        let parts = version.split(whereSeparator: { !$0.isNumber && $0 != "." }).first.map {
+            $0.split(separator: ".").map { Int($0) ?? 0 }
+        } ?? []
+        guard !parts.isEmpty else { return false }
+        for i in 0..<max(parts.count, other.count) {
+            let a = i < parts.count ? parts[i] : 0, b = i < other.count ? other[i] : 0
+            if a != b { return a < b }
+        }
+        return false
     }
 }
