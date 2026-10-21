@@ -21,6 +21,13 @@ final class EchoCancel {
     /// It gave the microphone only silence: not tried again until the app starts again.
     private(set) var failed = false
     private var users: Set<String> = []
+    /// Told when the engine is stopped from under its users (voice processing given up), so each
+    /// can start again.
+    private var stopped: [() -> Void] = []
+
+    func whenStopped(_ what: @escaping () -> Void) {
+        stopped.append(what)
+    }
 
     /// Turns voice processing on, if it's wanted and the engine isn't running (it can't change
     /// while it runs). The microphone's format changes with it, so this comes before reading it.
@@ -67,6 +74,7 @@ final class EchoCancel {
         failed = true
         if engine.isRunning { engine.stop() }
         turnOff()
+        for what in stopped { what() }
     }
 
     private func turnOff() {

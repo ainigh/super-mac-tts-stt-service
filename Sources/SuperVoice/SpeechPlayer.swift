@@ -54,6 +54,31 @@ final class SpeechPlayer: ObservableObject {
         engine = shared?.engine ?? AVAudioEngine()
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
+        // The engine stopped under it (the audio device changed, or voice processing was given up):
+        // the sentence being said would never finish, so it's said again.
+        shared?.whenStopped { [weak self] in self?.interrupted() }
+        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            guard let self, !self.engine.isRunning else { return }      // still running: nothing to do
+            self.interrupted()
+        }
+    }
+
+    /// The engine stopped while it was talking: what was being said is said again from that
+    /// sentence, with everything still queued.
+    private func interrupted() {
+        guard busy || !lines.isEmpty else { return }
+        var again: [Line] = []
+        if let playing { again.append(playing) }
+        if let ahead { again.append(ahead.line) }
+        again += lines
+        let done = itemDone
+        stop()
+        lines = again
+        itemDone = done
+        if !lines.isEmpty {
+            speaking = true
+            next()
+        }
     }
 
     /// Queues `text`; returns how many things are waiting to be said (counting it).
