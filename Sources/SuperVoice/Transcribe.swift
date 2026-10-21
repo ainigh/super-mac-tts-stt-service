@@ -166,13 +166,25 @@ struct TranscribeView: View {
                     .symbolEffect(.variableColor.iterative, isActive: true)
                 Text(current.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                 Spacer()
-                Text("\(Int(job.progress * 100))% of \(Captions.clock(job.duration))")
-                    .font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(progressLine(at: context.date))
+                        .font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+                }
                 Button("Stop") { job.cancel() }.buttonStyle(PillButton(tint: .secondary, filled: false))
             }
             ProgressView(value: job.progress).tint(Palette.teal)
             Lines(segments: job.segments)
         }
+    }
+
+    /// "42% of 12:30 · about 1:05 left" (the time left once there's enough to tell).
+    private func progressLine(at now: Date) -> String {
+        var line = "\(Int(job.progress * 100))% of \(Captions.clock(job.duration))"
+        if let started = job.started, job.progress > 0.05, job.progress < 1 {
+            let elapsed = now.timeIntervalSince(started)
+            line += " · about \(Captions.clock(elapsed * (1 - job.progress) / job.progress)) left"
+        }
+        return line
     }
 
     private func finished(_ item: LibraryRecord) -> some View {

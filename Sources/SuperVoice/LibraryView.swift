@@ -18,6 +18,7 @@ struct LibraryView: View {
     @State private var kind: LibraryRecord.Kind?
     @State private var starredOnly = false
     @State private var confirmDelete: LibraryRecord?
+    @FocusState private var searching: Bool
 
     var body: some View {
         HStack(spacing: 0) {
@@ -100,6 +101,8 @@ struct LibraryView: View {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search", text: $query).textFieldStyle(.plain)
+                    .focused($searching)
+                    .onExitCommand { query = "" }
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary)
                 }
@@ -108,6 +111,8 @@ struct LibraryView: View {
             .padding(.vertical, 6)
             .background(Color.primary.opacity(0.06), in: Capsule())
             .frame(maxWidth: 260)
+            .background(Button("") { searching = true }.keyboardShortcut("f", modifiers: .command).hidden())
+            .help("Search (⌘F)")
             Button("All") { kind = nil }.buttonStyle(Chip(selected: kind == nil))
             ForEach(LibraryRecord.Kind.library, id: \.self) { k in
                 Button(k.title + "s") { kind = k }.buttonStyle(Chip(selected: kind == k, tint: Card.color(k)))

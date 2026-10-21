@@ -56,7 +56,12 @@ struct ReadAloudView: View {
                     .buttonStyle(PillButton(tint: .secondary, filled: false))
                 }
                 Spacer()
-                if let note { Text(note).font(.system(size: 11)).foregroundStyle(.secondary) }
+                if let note {
+                    Text(note).font(.system(size: 11)).foregroundStyle(.secondary)
+                } else if !text.isEmpty {
+                    Text(counted(text.split(whereSeparator: \.isWhitespace).count, "word"))
+                        .font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit()
+                }
                 Button("Keep in library") {
                     library.add(LibraryRecord(kind: .note, text: text))
                     flash("Kept in the library")
