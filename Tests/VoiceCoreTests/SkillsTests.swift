@@ -18,7 +18,12 @@ final class FakeMac: MacHost {
     func spotlight(_ query: String, limit: Int) async -> [String] { Array(found.prefix(limit)) }
     func documentText(_ url: URL) async -> String? { url.pathExtension == "pdf" ? "PDF words" : nil }
     func defaultBrowser() async -> (id: String, name: String)? { browser }
-    func open(_ url: URL) async -> Bool { opened.append(url); return true }
+    var inFront: [Bool] = []
+    var forward: [String] = []
+    var shown: [(AppWindow, UUID?, String?)] = []
+    func open(_ url: URL, inFront front: Bool) async -> Bool { opened.append(url); inFront.append(front); return true }
+    func bringForward(_ bundleID: String) async -> Bool { forward.append(bundleID); return true }
+    func showApp(_ window: AppWindow, item: UUID?, query: String?) async -> Bool { shown.append((window, item, query)); return true }
     func appleScript(_ source: String) async -> Result<String, HostError> {
         ran.append(source)
         guard !scripts.isEmpty else { return .failure(HostError("no script")) }
@@ -89,7 +94,7 @@ final class SkillsTests: XCTestCase {
         XCTAssertEqual(chat.activeSkills.map(\.id), ["library", "math"])
         chat.skills = runner(FakeMac())
         chat.save = { _ in }
-        XCTAssertEqual(chat.activeSkills.map(\.id), ["library", "edit", "browser", "files", "clipboard", "mac", "math"])
+        XCTAssertEqual(chat.activeSkills.map(\.id), ["library", "edit", "browser", "files", "clipboard", "mac", "math", "app"])
         XCTAssertTrue(chat.systemPrompt().contains("- open_page:"))
         XCTAssertTrue(chat.systemPrompt().contains("- search_site:"))
         XCTAssertTrue(chat.systemPrompt().contains("wikipedia (en.wikipedia.org)"))
@@ -171,7 +176,9 @@ final class SkillsTests: XCTestCase {
         let r = runner(mac)
         let out = await r.run("open_page", ["url": "example.com"])!
         XCTAssertEqual(mac.opened.map(\.absoluteString), ["https://example.com"])
-        XCTAssertTrue(out.hasPrefix("Opened in Safari, where the user sees it.\nTitle: Example\nAddress: https://www.example.com/"))
+        XCTAssertTrue(out.hasPrefix("Opened in Safari, in front, where the user sees it.\nTitle: Example\nAddress: https://www.example.com/"))
+        XCTAssertEqual(mac.inFront, [true])
+        XCTAssertEqual(mac.forward, ["com.apple.Safari"])
         XCTAssertTrue(out.hasSuffix("Text:\nExample Domain\n\nThis domain is for examples."))
         XCTAssertTrue(mac.ran[0].hasPrefix(#"tell application id "com.apple.Safari" to do JavaScript "(function(){"#))
         XCTAssertTrue(mac.fetched.isEmpty)
@@ -261,6 +268,70 @@ final class SkillsTests: XCTestCase {
         XCTAssertNil(Site.parse("just words"))
         XCTAssertNil(Site.parse("two words https://x.com"))
         XCTAssertEqual(Site.defaults[0].host, "en.wikipedia.org")
+    }
+
+    func testTheBrowserIsShownOrKeptBehind() async {
+        let mac = FakeMac()
+        mac.scripts = [page("https://a.com/", "Words.")]
+        let r = runner(mac)
+        r.showBrowser = false
+        let behind = await r.run("open_page", ["url": "https://a.com/"])!
+        XCTAssertTrue(behind.hasPrefix("Opened in Safari, behind (show_browser brings it to the front)."))
+        XCTAssertEqual(mac.inFront, [false])
+        XCTAssertTrue(mac.forward.isEmpty)
+        // Asked to show it: in front.
+        _ = await r.run("web_search", ["query": "a", "show": true])
+        XCTAssertEqual(mac.inFront.last, true)
+        XCTAssertEqual(mac.forward, ["com.apple.Safari"])
+        let shown = await r.run("show_browser", [:])!
+        XCTAssertTrue(shown.hasPrefix("Safari is in front now"))
+        XCTAssertEqual(mac.forward.count, 2)
+    }
+
+    func testTheModelOpensTheAppsWindows() async throws {
+        let note = LibraryRecord(kind: .note, text: "Buy milk.", title: "Shopping")
+        let old = Assistant.record(id: UUID(), created: Date(), turns: [ChatTurn(role: .user, text: "Hi")], existing: nil)
+        let mac = FakeMac()
+        let model = FakeModel()
+        let chat = Conversation(llm: model, model: "m", library: { [note, old] })
+        chat.skills = runner(mac)
+        XCTAssertTrue(chat.systemPrompt().contains("- show_app:"))
+        model.script = [#"{"tool": "show_app", "arguments": {"window": "library", "item": "\#(note.id.uuidString.prefix(8))"}}"#,
+                        #"{"tool": "open_window", "arguments": {"window": "chats", "query": "budget"}}"#,
+                        #"{"tool": "show_app", "arguments": {"item": "\#(old.id.uuidString)"}}"#,
+                        #"{"tool": "show_app", "arguments": {"window": "kitchen"}}"#, "There."]
+        _ = try await chat.ask("Show me my shopping note")
+        XCTAssertEqual(mac.shown.map(\.0), [.library, .ai_library, .ai_library])
+        XCTAssertEqual(mac.shown[0].1, note.id)
+        XCTAssertEqual(mac.shown[1].2, "budget")
+        XCTAssertEqual(mac.shown[2].1, old.id)
+        XCTAssertTrue(((model.sent[1].messages.last?["content"] as? String) ?? "").contains("Opened library for the user, at “Shopping”."))
+        XCTAssertTrue(((model.sent[4].messages.last?["content"] as? String) ?? "").contains("Say which window: library, ai_library"))
+        XCTAssertEqual(AppWindow(said: "Read aloud"), .read_aloud)
+        XCTAssertNil(AppWindow(said: "kitchen"))
+    }
+
+    func testSayingItSavedWithoutSavingIsCaught() async throws {
+        let model = FakeModel()
+        var saved: [LibraryRecord] = []
+        let chat = Conversation(llm: model, model: "m", library: { [] })
+        chat.save = { saved.append($0) }
+        // It claims, is told nothing was saved, and then saves it (under a name it made up).
+        model.script = ["Done, I've added that to your library.", #"{"tool": "save_note", "arguments": {"text": "Call Sam"}}"#, "Saved: call Sam."]
+        let answer = try await chat.ask("Add call Sam to my library")
+        XCTAssertEqual(answer, "Saved: call Sam.")
+        XCTAssertEqual(saved.map(\.text), ["Call Sam"])
+        XCTAssertTrue(((model.sent[1].messages.last?["content"] as? String) ?? "").hasPrefix("Note from the Mac (not the user): you said something was added"))
+        // Told once: a second claim with nothing saved stands (it's said, not looped on).
+        model.script = ["I've noted it in your notes.", "I've noted it in your notes."]
+        _ = try await chat.ask("Note that too")
+        XCTAssertEqual(model.sent.count, 5)
+        XCTAssertTrue(AssistantTools.claimsLibraryChange("I’ve saved it as a note."))
+        XCTAssertTrue(AssistantTools.claimsLibraryChange("It's been added to your library."))
+        XCTAssertFalse(AssistantTools.claimsLibraryChange("Your library has three notes."))
+        XCTAssertFalse(AssistantTools.claimsLibraryChange("I've added the numbers: 42."))
+        XCTAssertEqual(AssistantTools.canonical("Save-Note"), "add_note")
+        XCTAssertEqual(AssistantTools.canonical("list_chats"), "list_chats")
     }
 
     // MARK: The rest

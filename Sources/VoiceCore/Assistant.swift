@@ -258,6 +258,42 @@ public enum AssistantTools {
         }
     }
 
+    /// Names models tend to give the tools, taken as the tool they mean.
+    static let aliases: [String: String] = [
+        "add_to_library": "add_note", "save_note": "add_note", "create_note": "add_note", "new_note": "add_note",
+        "note": "add_note", "add_library": "add_note", "save_to_library": "add_note", "library_add": "add_note",
+        "write_note": "add_note", "make_note": "add_note", "add_notes": "add_note", "save": "add_note", "add_library_item": "add_note",
+        "edit_library": "update_library", "update_note": "update_library", "append_note": "update_library",
+        "edit_note": "update_library", "change_library": "update_library", "library_update": "update_library", "update_library_item": "update_library",
+        "search_web": "web_search", "search": "web_search", "google": "web_search", "websearch": "web_search", "internet_search": "web_search",
+        "open_url": "open_page", "browse": "open_page", "open_website": "open_page", "open_link": "open_page", "visit": "open_page",
+        "open_browser": "show_browser", "bring_browser": "show_browser",
+        "open_window": "show_app", "show_window": "show_app", "open_app": "show_app", "show_library": "show_app", "open_library": "show_app",
+        "search_library": "list_library", "list_notes": "list_library", "read_note": "read_library", "read_notes": "read_library",
+        "calculator": "calculate", "calc": "calculate", "math": "calculate",
+    ]
+
+    /// The tool a name means: itself, or the one it's a common slip for.
+    public static func canonical(_ name: String) -> String {
+        let n = name.lowercased().trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: " ", with: "_")
+        return aliases[n] ?? n
+    }
+
+    /// The answer says something was added to or changed in the library ("I've added it to your notes").
+    public static func claimsLibraryChange(_ answer: String) -> Bool {
+        let a = answer.lowercased().replacingOccurrences(of: "’", with: "'")
+        let did = a.range(of: #"\b(i've|i have|i|i just|it's been|it has been|has been|have been|is now|it's now|is)\s+(just\s+|now\s+|also\s+)?(added|saved|noted|created|put|stored|written|wrote|updated|appended|changed|made|kept|starred|renamed|jotted)\b"#,
+                          options: .regularExpression) != nil
+        return did && a.range(of: #"\b(library|note|notes|noted)\b"#, options: .regularExpression) != nil
+    }
+
+    /// What the model is told when it said it saved something that no tool saved.
+    public static let unsavedMessage = """
+    Note from the Mac (not the user): you said something was added to or changed in the library, but no tool \
+    did it, so nothing was saved. If the user asked for it, call add_note or update_library now. Otherwise \
+    answer again without saying it was saved.
+    """
+
     /// How the model is told to call a tool, and what the tools are.
     public static func manual(_ tools: [Tool]) -> String {
         guard !tools.isEmpty else { return "" }
@@ -560,7 +596,7 @@ public final class Conversation {
             switch s.id {
             case Skills.editing.id: return save != nil
             case Skills.scripts.id: return runner != nil
-            case Skills.browser.id, Skills.files.id, Skills.clipboard.id, Skills.mac.id: return skills != nil
+            case Skills.browser.id, Skills.files.id, Skills.clipboard.id, Skills.mac.id, Skills.app.id: return skills != nil
             default: return true
             }
         }
@@ -607,9 +643,19 @@ public final class Conversation {
             var round = 0
             // The library as the tools see it (what they change shows at once).
             var records: [LibraryRecord]?
+            var edited = false, nudged = false
             while true {
                 let reply = try await send(now: now)
                 let calls = AssistantTools.calls(in: reply)
+                if calls.isEmpty, !edited, !nudged, round < maxToolRounds,
+                   activeSkills.contains(where: { $0.id == Skills.editing.id }), AssistantTools.claimsLibraryChange(reply) {
+                    // It says it saved something, but nothing did: told so, and asked to do it.
+                    nudged = true
+                    round += 1
+                    wire.append(["role": "assistant", "content": reply])
+                    wire.append(["role": "user", "content": AssistantTools.unsavedMessage])
+                    continue
+                }
                 if calls.isEmpty || round >= maxToolRounds {
                     content = calls.isEmpty ? reply : AssistantTools.stripped(reply)
                     break
@@ -620,7 +666,8 @@ public final class Conversation {
                 for call in calls {
                     toolCalls.append(call.name)
                     let result = await run(call, library: &records!)
-                    onToolUse?(ToolUse(name: call.name, arguments: call.argumentsJSON, result: result))
+                    if ["add_note", "update_library"].contains(AssistantTools.canonical(call.name)), result.hasPrefix("Added") || result.hasPrefix("Done:") { edited = true }
+                    onToolUse?(ToolUse(name: AssistantTools.canonical(call.name), arguments: call.argumentsJSON, result: result))
                     wire.append(["role": "user", "content": AssistantTools.resultMessage(call.name, result)])
                 }
             }
@@ -640,20 +687,46 @@ public final class Conversation {
     /// Runs one tool call (only the tools of the skills that are on).
     func run(_ call: AssistantTools.Call, library records: inout [LibraryRecord]) async -> String {
         let tools = self.tools
-        guard tools.contains(where: { $0.name == call.name }) else { return AssistantTools.unknown(call.name, among: tools) }
+        // A name close to a tool's ("save_note") is taken as it.
+        let name = AssistantTools.canonical(call.name)
+        guard tools.contains(where: { $0.name == name }) else { return AssistantTools.unknown(call.name, among: tools) }
         let args = call.arguments
-        if let result = AssistantTools.run(call.name, args, library: records, current: id) { return result }
-        if let (result, record) = AssistantTools.edit(call.name, args, library: records) {
+        if let result = AssistantTools.run(name, args, library: records, current: id) { return result }
+        if name == "show_app", let host = skills?.host { return await showApp(args, records: records, host: host) }
+        if let (result, record) = AssistantTools.edit(name, args, library: records) {
             if let record, let save {
                 save(record)
                 if let i = records.firstIndex(where: { $0.id == record.id }) { records[i] = record } else { records.insert(record, at: 0) }
             }
             return result
         }
-        if call.name == "calculate" { return Calculator.run(args) }
-        if let runner, let result = await ToolRunTools.run(call.name, args, via: runner) { return result }
-        if let skills, let result = await skills.run(call.name, args) { return result }
+        if name == "calculate" { return Calculator.run(args) }
+        if let runner, let result = await ToolRunTools.run(name, args, via: runner) { return result }
+        if let skills, let result = await skills.run(name, args) { return result }
         return AssistantTools.unknown(call.name, among: tools)
+    }
+
+    /// Opens one of the app's windows: at an item (a chat opens in the AI library), or searched.
+    func showApp(_ args: [String: Any], records: [LibraryRecord], host: MacHost) async -> String {
+        var window = ToolRunTools.string(args["window"] ?? args["name"]).flatMap(AppWindow.init(said:))
+        var item: LibraryRecord?
+        if let id = ToolRunTools.string(args["item"] ?? args["id"]) {
+            let key = id.trimmingCharacters(in: .whitespaces).uppercased()
+            let found = records.filter { $0.id.uuidString.hasPrefix(key) }
+            guard found.count == 1, let r = found.first else {
+                return found.isEmpty ? "Nothing has the id \(id)." : "The id \(id) matches more than one item; give more of it."
+            }
+            item = r
+            window = r.kind == .chat ? .ai_library : .library
+        }
+        guard let window else {
+            return "Say which window: " + AppWindow.allCases.map(\.rawValue).joined(separator: ", ") + "."
+        }
+        let query = ToolRunTools.string(args["query"] ?? args["search"])
+        guard await host.showApp(window, item: item?.id, query: query) else { return "The \(window.rawValue) window didn't open." }
+        var said = "Opened \(window.rawValue.replacingOccurrences(of: "_", with: " ")) for the user"
+        if let item { said += ", at “\(item.title)”" } else if let query { said += ", searched for “\(query)”" }
+        return said + "."
     }
 
     /// A question as the model gets it: with the date and time it was said, written out in full.

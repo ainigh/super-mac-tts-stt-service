@@ -16,6 +16,8 @@ final class SkillsModel: ObservableObject {
     @Published private(set) var sites: [Site]
     /// The web search, with {query} where the words go.
     @Published private(set) var searchTemplate: String
+    /// Pages the model opens come to the front, where you see them (else behind, unless you ask).
+    @Published private(set) var showBrowser: Bool
     /// The columns stay out even when AI Listen is off.
     @Published var pinned: Bool { didSet { defaults.set(pinned, forKey: "boardPinned") } }
     /// What the model used, newest first.
@@ -42,6 +44,13 @@ final class SkillsModel: ObservableObject {
         }
         searchTemplate = saved.string(forKey: "skillSearch") ?? SkillRunner.defaultSearch
         pinned = saved.bool(forKey: "boardPinned")
+        showBrowser = saved.object(forKey: "skillShowBrowser") as? Bool ?? true
+    }
+
+    func setShowBrowser(_ on: Bool) {
+        showBrowser = on
+        defaults.set(on, forKey: "skillShowBrowser")
+        AssistantModel.shared.skillsChanged()
     }
 
     /// Columns 2 and 3 show.

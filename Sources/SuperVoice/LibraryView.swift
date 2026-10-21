@@ -9,6 +9,8 @@ struct LibraryView: View {
     final class Selection: ObservableObject {
         static let shared = Selection()
         @Published var id: UUID?
+        /// Words to search for, set from elsewhere (the model's show_app).
+        @Published var query: String?
     }
 
     @EnvironmentObject var service: Service
@@ -53,6 +55,11 @@ struct LibraryView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: selection.id)
+        .onReceive(selection.$query) { q in
+            guard let q else { return }
+            query = q
+            selection.query = nil
+        }
         .confirmationDialog("Delete \(confirmDelete?.title ?? "")?", isPresented: Binding(get: { confirmDelete != nil },
                                                                                          set: { if !$0 { confirmDelete = nil } })) {
             Button("Delete", role: .destructive) {

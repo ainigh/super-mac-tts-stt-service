@@ -88,6 +88,7 @@ enum Windows {
         NSApp.activate()
         if let w = open[kind] {
             w.makeKeyAndOrderFront(nil)
+            w.orderFrontRegardless()
             return
         }
         let view: AnyView
@@ -114,6 +115,8 @@ enum Windows {
         w.delegate = closer
         open[kind] = w
         w.makeKeyAndOrderFront(nil)
+        // Opened by voice, the app may not be active: it shows all the same.
+        w.orderFrontRegardless()
     }
 
     /// Opens the library on one item.

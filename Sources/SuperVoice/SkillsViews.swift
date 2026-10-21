@@ -44,7 +44,10 @@ struct SkillsColumn: View {
     /// The browser's search, and the sites it can search.
     private var sitesSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            SectionTitle("Browser searches")
+            SectionTitle("Browser")
+            Toggle("Show the browser as it opens pages", isOn: Binding(get: { board.showBrowser }, set: { board.setShowBrowser($0) }))
+                .toggleStyle(.checkbox).font(.system(size: 11))
+                .help("On: pages it opens come to the front, where you see them. Off: they open behind, unless you ask it to show you.")
             HStack(spacing: 6) {
                 TextField(SkillRunner.defaultSearch, text: $search)
                     .textFieldStyle(.plain)
