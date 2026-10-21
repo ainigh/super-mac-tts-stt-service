@@ -231,10 +231,14 @@ struct AssistantView: View {
                 }
                 HStack(spacing: 8) {
                     Text("Barge in").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
-                    Toggle("Talk over an answer to stop it and be heard (best with headphones; off, it doesn't listen while it talks)",
+                    Toggle("Talk over an answer to stop it (off: it doesn't listen while it talks)",
                            isOn: Binding(get: { ai.settings.bargeIn }, set: { v in ai.change { $0.bargeIn = v } }))
                         .toggleStyle(.checkbox).font(.system(size: 11))
                 }
+                Text(AssistantModel.echo.cancelsEcho
+                     ? "Echo cancellation is on: its own voice is taken out of what the microphone hears. Say “stop”, “wait” or “mouse”, or just talk, to cut in."
+                     : "Echo cancellation isn't available with this microphone or speakers, so only “stop”, “wait” or “mouse” said first cut in. Headphones help.")
+                    .font(.system(size: 11)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     Text("Scripts").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
                     TextField(ToolRunClient.defaultURL, text: $toolRunURL)

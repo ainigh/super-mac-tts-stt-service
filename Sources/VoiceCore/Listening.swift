@@ -37,8 +37,10 @@ public enum TurnEnd {
 }
 
 /// While the answer is being read, the microphone stays open so the user can talk over it (barge
-/// in). What comes back is then mostly the answer itself, heard through the speakers: this tells
-/// that apart from the user.
+/// in). Echo cancellation takes most of the answer back out, but what's left (or all of it, without
+/// echo cancellation) is still heard, and misheard: this tells that apart from the user. A word
+/// like "stop" or "wait" said first always counts; anything else only with echo cancellation on,
+/// and only when it's clearly not the answer (three new words or more, most of what was heard).
 public enum Echo {
     /// Words that stop it said first, even alone.
     static let bargeWords: Set<String> = ["stop", "wait", "mouse", "hold", "quiet", "pause", "enough"]
@@ -48,7 +50,8 @@ public enum Echo {
 
     /// What was heard while `spoken` was being read: nil when it's only the answer coming back (or
     /// too little to tell); else what the user said, with the echo heard before it taken off.
-    public static func interruption(_ heard: String, reading spoken: String) -> String? {
+    /// `cancelled`: echo cancellation is on, so free speech can interrupt too.
+    public static func interruption(_ heard: String, reading spoken: String, cancelled: Bool = true) -> String? {
         let tokens = Assistant.tokens(heard)
         guard !tokens.isEmpty else { return nil }
         let echo = Set(Assistant.tokens(spoken).map(\.word))
@@ -61,10 +64,11 @@ public enum Echo {
         let rest = Array(tokens[start...])
         let said = Assistant.text(heard, from: rest[0].range.lowerBound)
         if bargeWords.contains(rest[0].word) { return said }
-        let content = rest.filter { !stopWords.contains($0.word) }
+        guard cancelled else { return nil }
+        let content = tokens.filter { !stopWords.contains($0.word) }
         let fresh = content.filter { !echo.contains($0.word) }
-        // Two new words at least, and most of what's left new: not the answer, misheard.
-        guard fresh.count >= 2, Double(fresh.count) >= Double(max(content.count, 1)) * 0.5 else { return nil }
+        // Three new words at least, and most of all that was heard: not the answer, misheard.
+        guard fresh.count >= 3, Double(fresh.count) >= Double(max(content.count, 1)) * 0.7 else { return nil }
         return said
     }
 }

@@ -40,10 +40,13 @@ off) and turns itself off. Saying "goodbye" plays it too.
 - **Pauses**: a pause ends what you said, unless it sounds unfinished ("…and the", "…because",
   a trailing comma, no full stop): then it waits a moment longer for the rest. And if more comes
   while the model is still working on the first half, the two are asked as one question.
-- **Barge in**: it keeps listening while it talks; talk over it and it stops and hears you. What
-  it hears of itself through the speakers is told apart from you (it's the answer's own words),
-  but headphones work best; turn **Barge in** off in its window and it stops listening while it
-  talks, as before.
+- **Barge in**: it keeps listening while it talks, so you can cut in. Its microphone and its voice
+  share one audio engine with Apple's voice processing (echo cancellation, as in FaceTime), so
+  Kokoro's voice is taken back out of what the microphone hears and it doesn't hear itself. What
+  little leaks through is told apart by its words: "stop", "wait" or "mouse" said first always
+  cuts in; anything else only when it's clearly you (three new words or more). Where echo
+  cancellation isn't available (some audio devices; the window says so), only those words cut in.
+  Turn **Barge in** off in its window and it stops listening while it talks.
 - **"Stop"** stops it talking. **"New chat"** starts over. **"Goodbye"** (or "that's all") turns it
   off. You can type instead of talking.
 - Each start is a **new chat**, kept in the **AI library** as it goes. The model sees only the chat

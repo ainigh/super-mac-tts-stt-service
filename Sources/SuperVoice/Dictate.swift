@@ -20,9 +20,14 @@ final class Recorder: ObservableObject {
     let holdIfUnfinished: Double?
     var onUtterance: ((String) -> Void)?
 
-    init(pauseToEnd: Double? = nil, holdIfUnfinished: Double? = nil) {
+    /// The engine shared with a voice, echo cancelled (AI Listen's), or nil: its own.
+    let echo: EchoCancel?
+
+    init(pauseToEnd: Double? = nil, holdIfUnfinished: Double? = nil, shared: EchoCancel? = nil) {
         self.pauseToEnd = pauseToEnd
         self.holdIfUnfinished = holdIfUnfinished
+        self.echo = shared
+        engine = shared?.engine ?? AVAudioEngine()
     }
 
     @Published private(set) var on = false
@@ -35,7 +40,7 @@ final class Recorder: ObservableObject {
     @Published private(set) var started: Date?
     @Published var problem: String?
 
-    private let engine = AVAudioEngine()
+    private let engine: AVAudioEngine
     private let lock = NSLock()
     private var resampler: Resampler?            // used on the audio thread, under the lock
     private var cutter = PhraseCutter(pause: 0.8)
@@ -105,8 +110,8 @@ final class Recorder: ObservableObject {
         ticker?.invalidate()
         if let rewiring { NotificationCenter.default.removeObserver(rewiring) }
         rewiring = nil
-        engine.stop()
         engine.inputNode.removeTap(onBus: 0)
+        if let echo { echo.stop(for: "mic") } else { engine.stop() }
         on = false
         level = 0
         started = nil
@@ -141,9 +146,13 @@ final class Recorder: ObservableObject {
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             self?.heard(buffer)
         }
-        engine.prepare()
         do {
-            try engine.start()
+            if let echo {
+                try echo.start(for: "mic")
+            } else {
+                engine.prepare()
+                try engine.start()
+            }
         } catch {
             input.removeTap(onBus: 0)
             return "Couldn't start the microphone: \(error.localizedDescription)"

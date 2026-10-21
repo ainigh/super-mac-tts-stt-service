@@ -71,6 +71,14 @@ final class SkillsTests: XCTestCase {
         XCTAssertEqual(Echo.interruption("on the Pacific wait what about Chile", reading: answer), "Wait what about Chile")
         XCTAssertEqual(Echo.interruption("Actually, tell me about Bolivia instead", reading: answer), "Actually, tell me about Bolivia instead")
         XCTAssertNil(Echo.interruption("", reading: answer))
+        // Misheard echo with a couple of odd words isn't taken for the user.
+        XCTAssertNil(Echo.interruption("Lima is the capitol of Peru and it sits on the pacific toast", reading: answer))
+        XCTAssertNil(Echo.interruption("Peru and it fits", reading: answer))
+        // Without echo cancellation, only a word like "stop" said first interrupts.
+        XCTAssertNil(Echo.interruption("Actually, tell me about Bolivia instead", reading: answer, cancelled: false))
+        XCTAssertEqual(Echo.interruption("Wait, tell me about Bolivia", reading: answer, cancelled: false), "Wait, tell me about Bolivia")
+        XCTAssertEqual(Echo.interruption("the Pacific coast stop", reading: answer, cancelled: false), "Stop")
+        XCTAssertEqual(Echo.interruption("the Pacific coast. Stop talking", reading: answer, cancelled: false), "Stop talking")
     }
 
     // MARK: Which skills, which tools
