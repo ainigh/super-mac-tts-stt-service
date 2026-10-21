@@ -168,6 +168,16 @@ public enum PCM {
         return p
     }
 
+    /// Quiet audio turned up so its loudest sample reaches `to` (never turned down, and by no more
+    /// than `atMost` times): what a quiet microphone gives, at a level the models are used to.
+    public static func lifted(_ samples: [Float], to target: Float = 0.5, atMost: Float = 30) -> [Float] {
+        let p = peak(samples[...])
+        guard p > 0, p < target else { return samples }
+        let gain = min(target / p, atMost)
+        guard gain > 1.01 else { return samples }
+        return samples.map { $0 * gain }
+    }
+
     private static func u16(_ b: [UInt8], _ i: Int) -> UInt16 {
         guard i + 1 < b.count else { return 0 }
         return UInt16(b[i]) | UInt16(b[i + 1]) << 8
