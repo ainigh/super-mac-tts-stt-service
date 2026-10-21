@@ -34,12 +34,15 @@ public enum Skills {
 
     public static let app = Skill(id: "app", title: "This app", summary: "Opens Super Voice's own windows when you ask: the library (at an item, or searched), the AI library, Dictate, Read aloud, Transcribe, AI Listen, the panel", symbol: "macwindow")
 
-    public static let all: [Skill] = [library, editing, browser, files, clipboard, mac, math, app, scripts]
+    public static let team = Skill(id: "team", title: Team.teammate, summary: "A second assistant, \(Team.teammate), with his own model and voice: ask \(Assistant.name) to bring him in, and the two talk it over out loud (you hear it all, and can cut in)", symbol: "person.2.fill")
+
+    public static let all: [Skill] = [library, editing, browser, files, clipboard, mac, math, app, scripts, team]
     public static var ids: [String] { all.map(\.id) }
 
     /// The tools of a skill (the browser's include the user's sites).
-    public static func tools(_ id: String, sites: [Site] = []) -> [AssistantTools.Tool] {
+    public static func tools(_ id: String, sites: [Site] = [], teammate: String = Team.teammate) -> [AssistantTools.Tool] {
         switch id {
+        case team.id: return Team.tools(teammate: teammate)
         case library.id: return AssistantTools.library
         case editing.id: return AssistantTools.editing
         case browser.id: return BrowserSkill.tools(sites: sites)

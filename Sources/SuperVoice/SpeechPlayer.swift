@@ -33,6 +33,8 @@ final class SpeechPlayer: ObservableObject {
     private let player = AVAudioPlayerNode()
     private let format = AVAudioFormat(standardFormatWithSampleRate: Double(PCM.speakRate), channels: 1)!
     private var lines: [Line] = []
+    /// What to do once each item (by number) has been heard.
+    private var itemDone: [Int: () -> Void] = [:]
     private var ahead: (line: Line, audio: Task<[Float], Error>)?
     private var playing: Line?
     /// A sentence is being made or played.
@@ -57,14 +59,28 @@ final class SpeechPlayer: ObservableObject {
     /// Queues `text`; returns how many things are waiting to be said (counting it).
     @discardableResult
     func enqueue(_ text: String, voice: Voice, speed: Double) -> Int {
+        add(text, voice: voice, speed: speed)
+        return pendingItems
+    }
+
+    /// Queues `text` and returns its number; `done` runs on the main thread once all of it has
+    /// been heard (not if it's stopped first; nothing to say, it runs at once).
+    @discardableResult
+    func add(_ text: String, voice: Voice, speed: Double, done: (() -> Void)? = nil) -> Int {
         items += 1
+        let item = items
         let ns = text as NSString
         var searchFrom = 0
+        var any = false
         for sentence in SpokenText.sentences(text) {
             let r = ns.range(of: sentence, range: NSRange(location: searchFrom, length: ns.length - searchFrom))
             let offset = r.location == NSNotFound ? searchFrom : r.location
             if r.location != NSNotFound { searchFrom = r.location + r.length }
-            lines.append(Line(text: sentence, voice: voice, speed: speed, item: items, offset: offset))
+            lines.append(Line(text: sentence, voice: voice, speed: speed, item: item, offset: offset))
+            any = true
+        }
+        if let done {
+            if any { itemDone[item] = done } else { DispatchQueue.main.async(execute: done) }
         }
         if !speaking {
             current = ""
@@ -72,7 +88,15 @@ final class SpeechPlayer: ObservableObject {
         }
         if !lines.isEmpty || busy { speaking = true }
         if !busy { next() }
-        return pendingItems
+        return item
+    }
+
+    /// A line has been heard: if it was its item's last, the item is done.
+    private func heard(_ line: Line) {
+        guard let done = itemDone[line.item] else { return }
+        if lines.contains(where: { $0.item == line.item }) || ahead?.line.item == line.item { return }
+        itemDone[line.item] = nil
+        done()
     }
 
     /// Says `text`, dropping anything that was going on.
@@ -94,6 +118,7 @@ final class SpeechPlayer: ObservableObject {
         let dropped = pendingItems
         epoch += 1
         lines = []
+        itemDone = [:]
         ahead?.audio.cancel()
         ahead = nil
         playing = nil
@@ -168,7 +193,9 @@ final class SpeechPlayer: ObservableObject {
         guard !audio.isEmpty,
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(audio.count)),
               let data = buffer.floatChannelData?[0] else {
-            next()
+            let mine = epoch
+            heard(line)
+            if mine == epoch { next() }
             return
         }
         audio.withUnsafeBufferPointer { data.update(from: $0.baseAddress!, count: audio.count) }
@@ -201,6 +228,9 @@ final class SpeechPlayer: ObservableObject {
                 guard let self, mine == self.epoch else { return }
                 self.busy = false
                 self.playing = nil
+                self.heard(line)
+                // Being heard may have stopped it (a delivery that cut in): then there's no next.
+                guard mine == self.epoch else { return }
                 self.next()
             }
         }

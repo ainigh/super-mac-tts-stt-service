@@ -9,6 +9,8 @@ struct AssistantView: View {
     @ObservedObject var ai = AssistantModel.shared
     @ObservedObject var voice = AssistantModel.shared.voice
     @ObservedObject var listener = AssistantModel.shared.listener
+    @ObservedObject var prints = VoicePrints.shared
+    @ObservedObject var board = SkillsModel.shared
     @State private var typed = ""
     @State private var url = AssistantModel.shared.settings.ollamaURL
     @State private var toolRunURL = AssistantModel.shared.settings.toolRunURL
@@ -17,6 +19,7 @@ struct AssistantView: View {
     var body: some View {
         Page(title: "AI Listen", subtitle: "Start it (or say “\(Assistant.name)”), then talk; the answer is read back",
              symbol: "sparkles", colors: [Palette.violet, Palette.pink]) {
+            let _ = board.enabled      // redraws as the Jerry skill comes and goes
             if let status = Neural.status(service.neural.ears, what: "speech recognition") {
                 Notice(text: status, tint: .blue, symbol: "arrow.down.circle")
             }
@@ -97,9 +100,13 @@ struct AssistantView: View {
                 ProgressView().controlSize(.small)
                 Text("Thinking…")
             case .speaking:
-                Image(systemName: "speaker.wave.2.fill").foregroundStyle(Palette.violet)
+                Image(systemName: "speaker.wave.2.fill").foregroundStyle(ai.speaking == Team.teammate ? Palette.teal : Palette.violet)
                     .symbolEffect(.variableColor.iterative, isActive: true)
-                Text("Speaking…")
+                Text("\(ai.speaking ?? Assistant.name) speaking…")
+            }
+            if ai.jerryThinking, ai.phase != .thinking || ai.working?.contains(Team.teammate) == true {
+                ProgressView().controlSize(.small).padding(.leading, 6)
+                Text("\(Team.teammate) working…").foregroundStyle(Palette.teal)
             }
         }
         .font(.system(size: 13, weight: .medium))
@@ -117,10 +124,10 @@ struct AssistantView: View {
                     ForEach(Array(ai.turns.enumerated()), id: \.offset) { i, turn in
                         ChatBubble(turn: turn).id(i)
                     }
-                    if ai.thinking {
+                    if let working = ai.working {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
-                            Text("\(ai.modelName) is thinking…").font(.system(size: 12)).foregroundStyle(.secondary)
+                            Text(working).font(.system(size: 12)).foregroundStyle(.secondary)
                         }
                         .id("thinking")
                     }
@@ -164,6 +171,8 @@ struct AssistantView: View {
             HowToLine(symbol: "3.circle", text: "“Stop” stops it talking. “New chat” starts over. “Goodbye” turns it off, and so does \(AssistantModel.clock(ai.settings.idleSeconds)) with nothing said; you hear a sound as it does.")
             HowToLine(symbol: "books.vertical", text: "Each chat is kept in the AI library. A new chat starts fresh, but ask about an earlier one, or something in your library, and it looks it up; ask, and it adds notes or changes them.")
             HowToLine(symbol: "safari", text: "Its skills (on the panel, beside it) let it search the web and read pages in your browser, find and read files, read the clipboard, check the Mac, and do sums.")
+            HowToLine(symbol: "person.2", text: "With the \(Team.teammate) skill on, there are two of them: say “Tom, ask \(Team.teammate) to…” and the two talk it over out loud, each in their own voice; what one says reaches the other only once you've heard it, so cut in and it doesn't. Or talk to \(Team.teammate) yourself by name. \(Team.teammate) can be busy while you talk to Tom.")
+            HowToLine(symbol: "hand.wave", text: "With Listen on (the ear), a wave at the camera starts it too, and stops it talking. Soft sounds every few seconds say what it's working on.")
         }
         .padding(.bottom, 6)
     }
@@ -245,6 +254,61 @@ struct AssistantView: View {
                      : AssistantModel.echo.failed ? "Echo cancellation gave the microphone only silence here, so it's off until the app starts again: only “stop”, “wait” or “Tom” said first cut in."
                      : "Say “stop”, “wait” or “Tom”, or just talk, to cut in.")
                     .font(.system(size: 11)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+                Divider().padding(.vertical, 2)
+                HStack(spacing: 8) {
+                    Text(Team.teammate).font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+                    if !ai.teamOn {
+                        Text("Off: turn the \(Team.teammate) skill on (the panel's Skills column) for a second assistant Tom can bring in")
+                            .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    } else if ai.models.isEmpty {
+                        Text("His model: \(ai.jerryModelName)").font(.system(size: 12)).foregroundStyle(.secondary)
+                    } else {
+                        Picker("", selection: Binding(get: { ai.settings.jerryModel }, set: { m in ai.change { $0.jerryModel = m } })) {
+                            Text("Same as Tom (\(ai.modelName))").tag("")
+                            ForEach(ai.models, id: \.self) { Text($0).tag($0) }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 280)
+                        .help("\(Team.teammate)'s model (Tom's unless you pick another)")
+                    }
+                }
+                if ai.teamOn {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("Voice").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 4) {
+                            VoicePicker(selected: ai.jerryVoice.id) { v in
+                                ai.change { $0.jerryVoice = v.id }
+                                SpeechPlayer.preview(v, speed: service.settings.speed)
+                            }
+                            Text("\(Team.teammate)'s voice (Tom's is the panel's). Unset, it's the first of the other kind from Tom's, so they're told apart.")
+                                .font(.system(size: 10)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                Divider().padding(.vertical, 2)
+                HStack(spacing: 8) {
+                    Text("Wave").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+                    Toggle("With Listen on, watch the camera: a wave starts it (and stops it talking). The camera's light is on while it watches.",
+                           isOn: Binding(get: { ai.settings.wave }, set: { v in ai.setWave(v) }))
+                        .toggleStyle(.checkbox).font(.system(size: 11))
+                }
+                HStack(spacing: 8) {
+                    Text("Working").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+                    Toggle("A soft sound every three seconds while it works: one for thinking (another for \(Team.teammate)), one for the browser, one for files and the library, one for scripts",
+                           isOn: Binding(get: { ai.settings.workingSounds }, set: { v in ai.change { $0.workingSounds = v } }))
+                        .toggleStyle(.checkbox).font(.system(size: 11))
+                        .disabled(!ai.sounds)
+                }
+                HStack(spacing: 8) {
+                    Text("Prints").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+                    Toggle("Tell the voices from yours by how they sound (voice prints): while one talks, what sounds like it is dropped before it's written down, and what sounds like you gets through",
+                           isOn: Binding(get: { ai.settings.voicePrints }, set: { v in ai.change { $0.voicePrints = v } }))
+                        .toggleStyle(.checkbox).font(.system(size: 11))
+                    if let status = Neural.status(prints.state, what: "the voice prints model") {
+                        Text(status).font(.system(size: 10)).foregroundStyle(.tertiary)
+                    }
+                }
+                Divider().padding(.vertical, 2)
                 HStack(spacing: 8) {
                     Text("Scripts").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
                     TextField(ToolRunClient.defaultURL, text: $toolRunURL)
@@ -307,6 +371,7 @@ struct AssistantView: View {
         case "calculate": return "the calculator"
         case "show_app": return "opening a window"
         case "show_browser": return "showing the browser"
+        case "tell_jerry": return "talking to \(Team.teammate)"
         default: return tool
         }
     }
@@ -373,6 +438,7 @@ struct ChatBubble: View {
 
     var body: some View {
         let user = turn.role == .user
+        let jerry = turn.name == Team.teammate
         HStack {
             if user { Spacer(minLength: 60) }
             VStack(alignment: user ? .trailing : .leading, spacing: 3) {
@@ -382,9 +448,14 @@ struct ChatBubble: View {
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .foregroundStyle(user ? Color.white : Color.primary)
                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(user ? Palette.violet : Color.primary.opacity(0.07)))
-                Text((user ? "You" : Assistant.name) + " · " + Self.time.string(from: turn.time))
-                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+                        .fill(user ? Palette.violet : (jerry ? Palette.teal.opacity(0.14) : Color.primary.opacity(0.07))))
+                    .overlay(alignment: .leading) {
+                        if turn.to != nil, !user {
+                            RoundedRectangle(cornerRadius: 2).fill(jerry ? Palette.teal : Palette.violet).frame(width: 3).padding(.vertical, 6)
+                        }
+                    }
+                Text(turn.speaker + (turn.to.map { " → \($0)" } ?? "") + " · " + Self.time.string(from: turn.time))
+                    .font(.system(size: 10)).foregroundStyle(jerry ? Palette.teal : .tertiary)
             }
             if !user { Spacer(minLength: 60) }
         }

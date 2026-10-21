@@ -68,6 +68,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>To write down what you say: in Dictate, while always listening, and to AI Listen. It stays on this Mac.</string>
+  <key>NSCameraUsageDescription</key><string>To see you wave, which starts AI Listen when Listen is on. Nothing is kept or sent anywhere; the camera is only on while it watches for a wave.</string>
   <key>NSAppleEventsUsageDescription</key><string>So AI Listen can read the page open in your browser and find text on it, when you ask it to. It stays on this Mac.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
 </dict>

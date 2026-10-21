@@ -31,6 +31,12 @@ struct SkillsColumn: View {
                 SectionTitle("Always there")
                 Hint(word: Assistant.wakeWords[0][0], does: assistant.alwaysListen ? "starts it (always listening is on)" : "starts it, with Listen on")
                 Hint(word: "stop · new chat · goodbye", does: "while it's on")
+                if board.isOn(Skills.team) {
+                    Hint(word: "ask \(Team.teammate)…", does: "Tom brings him in; “\(Team.teammate), …” talks to him")
+                }
+                if assistant.settings.wave {
+                    Hint(word: "a wave", does: assistant.alwaysListen ? "at the camera starts it" : "starts it, with Listen on")
+                }
                 Text("Talk over an answer to stop it. Off after \(AssistantModel.clock(assistant.settings.idleSeconds)) with nothing said.")
                     .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }

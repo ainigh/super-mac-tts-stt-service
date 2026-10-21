@@ -72,3 +72,33 @@ public enum Echo {
         return said
     }
 }
+
+/// A wave at the camera: a hand going left and right a few times. Given where the hand was, left
+/// to right across the frame (0 to 1), over the last second or two.
+public enum Waving {
+    /// How far the hand must swing (of the frame's width), and how many times it must turn.
+    public static let swing = 0.06
+    public static let turns = 2
+
+    /// The hand went back and forth: it turned `turns` times at least, swinging `swing` or more.
+    /// A turn is a change of direction after moving at least a third of the swing one way, so a
+    /// shaky hand held still isn't one.
+    public static func isWave(_ xs: [Double], swing: Double = Waving.swing, turns wanted: Int = Waving.turns) -> Bool {
+        guard xs.count >= 6, let lo = xs.min(), let hi = xs.max(), hi - lo >= swing else { return false }
+        let step = max(swing / 3, 0.01)
+        var turns = 0
+        var direction = 0           // 1: going right, -1: left, 0: not yet
+        var extreme = xs[0]
+        for x in xs.dropFirst() {
+            switch direction {
+            case 0:
+                if x - extreme >= step { direction = 1; extreme = x } else if extreme - x >= step { direction = -1; extreme = x }
+            case 1:
+                if x > extreme { extreme = x } else if extreme - x >= step { turns += 1; direction = -1; extreme = x }
+            default:
+                if x < extreme { extreme = x } else if x - extreme >= step { turns += 1; direction = 1; extreme = x }
+            }
+        }
+        return turns >= wanted
+    }
+}

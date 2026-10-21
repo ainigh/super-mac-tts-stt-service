@@ -9,12 +9,21 @@ public struct ChatTurn: Codable, Equatable, Sendable {
     public var role: Role
     public var text: String
     public var time: Date
+    /// Who said it, when it isn't the user or Tom: "Jerry". (Nil: the user, or Tom.)
+    public var name: String?
+    /// Whom it was said to, when it wasn't the user: "Jerry" (Tom handing him something), "Tom".
+    public var to: String?
 
-    public init(role: Role, text: String, time: Date = Date()) {
+    public init(role: Role, text: String, time: Date = Date(), name: String? = nil, to: String? = nil) {
         self.role = role
         self.text = text
         self.time = time
+        self.name = name
+        self.to = to
     }
+
+    /// Who said it, as shown: "You", "Tom", "Jerry".
+    public var speaker: String { role == .user ? "You" : (name ?? Assistant.name) }
 }
 
 /// Something written down and kept: a dictation, a file's transcript, text kept from Read aloud,

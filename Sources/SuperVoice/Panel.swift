@@ -56,6 +56,14 @@ struct PanelView: View {
             .help(assistant.alwaysListen ? "Always listening for “\(Assistant.wakeWords[0][0])”: say it, then talk with Ollama. Nothing else is acted on. Click to stop."
                                          : "Always listen for “\(Assistant.wakeWords[0][0])”: say it, then talk with Ollama (nothing else said is acted on)")
             Button {
+                assistant.setWave(!assistant.settings.wave)
+            } label: {
+                Image(systemName: assistant.settings.wave ? "hand.wave.fill" : "hand.wave")
+            }
+            .buttonStyle(PillButton(tint: Palette.orange, filled: assistant.settings.wave && assistant.alwaysListen))
+            .help(assistant.settings.wave ? "With Listen on, a wave at the camera starts AI Listen (the camera's light is on while it watches). Click to turn the camera off."
+                                          : "Watch the camera while Listen is on: a wave starts AI Listen")
+            Button {
                 board.pinned.toggle()
             } label: {
                 Image(systemName: board.pinned ? "sidebar.right" : "rectangle.split.3x1")
@@ -104,7 +112,7 @@ struct PanelView: View {
             ToolTile(title: "Library", detail: kept == 0 ? "Nothing kept yet" : "\(kept) kept", symbol: "square.grid.2x2.fill", colors: [Palette.green, Palette.teal]) {
                 close(); Windows.show(.library)
             }
-            ToolTile(title: "AI listen", detail: assistant.on ? "On: just talk (click to stop)" : "Talk with Ollama", symbol: assistant.on ? "stop.fill" : "sparkles",
+            ToolTile(title: "AI listen", detail: assistant.on ? (assistant.jerryThinking ? "On: \(Team.teammate)'s working (click to stop)" : "On: just talk (click to stop)") : (board.isOn(Skills.team) ? "Talk with Tom and \(Team.teammate)" : "Talk with Ollama"), symbol: assistant.on ? "stop.fill" : "sparkles",
                      colors: [Palette.violet, Palette.pink]) {
                 // Talk right away, no wake word, and no window: the chat works without it (AI library shows it).
                 assistant.toggle()
@@ -116,6 +124,8 @@ struct PanelView: View {
                 Button(assistant.alwaysListen ? "Stop listening for “\(Assistant.wakeWords[0][0])”" : "Always listen for “\(Assistant.wakeWords[0][0])”") {
                     assistant.setAlwaysListen(!assistant.alwaysListen)
                 }
+                Toggle("Wave at the camera to start it (with Listen on)", isOn: Binding(get: { assistant.settings.wave }, set: { assistant.setWave($0) }))
+                Toggle("\(Team.teammate), a second assistant", isOn: Binding(get: { board.isOn(Skills.team) }, set: { board.set(Skills.team, on: $0) }))
                 Toggle("Talk over it to stop it (barge in)", isOn: Binding(get: { assistant.settings.bargeIn }, set: { v in assistant.change { $0.bargeIn = v } }))
                 Toggle("Let the model think (slower)", isOn: Binding(get: { assistant.settings.thinking }, set: { assistant.setThinking($0) }))
             }

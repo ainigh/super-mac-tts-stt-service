@@ -19,6 +19,12 @@ final class Recorder: ObservableObject {
     let pauseToEnd: Double?
     let holdIfUnfinished: Double?
     var onUtterance: ((String) -> Void)?
+    /// Whether to check each phrase before writing it down (on the main thread, as it's cut): nil,
+    /// no; else whether a voice is playing just now. See `screen`.
+    var screening: (() -> Bool?)?
+    /// Checks a phrase (16 kHz samples) off the main thread, given whether a voice was playing:
+    /// true drops it (it was the voice, not the user), false keeps it.
+    var screen: ((_ samples: [Float], _ playing: Bool) async -> Bool)?
 
     /// The engine shared with a voice, echo cancelled (AI Listen's), or nil: its own.
     let echo: EchoCancel?
@@ -50,8 +56,9 @@ final class Recorder: ObservableObject {
 
     private var done = ""
     private var guess = ""
-    /// Phrases waiting to be written down, oldest first (`send`: it ends an utterance).
-    private var waiting: [(samples: [Float], send: Bool)] = []
+    /// Phrases waiting to be written down, oldest first (`send`: it ends an utterance; `playing`:
+    /// whether a voice was playing as it was said, nil when that isn't checked).
+    private var waiting: [(samples: [Float], send: Bool, playing: Bool?)] = []
     private var writing = false
     /// Counts clears, so what's written down for something cleared is dropped.
     private var generation = 0
@@ -200,7 +207,7 @@ final class Recorder: ObservableObject {
 
     private func enqueue(_ samples: [Float], send: Bool = false) {
         phraseNumber += 1
-        waiting.append((samples, send))
+        waiting.append((samples, send, screening?()))
         // Always listening with nothing writing it down (the model failed): don't pile up forever.
         if pauseToEnd != nil, waiting.count > 30 { waiting.removeFirst(waiting.count - 30) }
         writeNext()
@@ -214,11 +221,17 @@ final class Recorder: ObservableObject {
         }
         writing = true
         let mine = generation
+        let screen = self.screen
         Task.detached { [weak self] in
             var said = ""
             var problem: String?
             do {
-                said = try await Neural.shared.write(item.samples).text
+                // One of the voices talking, not the user: dropped unheard.
+                if let playing = item.playing, let screen, await screen(item.samples, playing) {
+                    said = ""
+                } else {
+                    said = try await Neural.shared.write(item.samples).text
+                }
             } catch {
                 problem = error.localizedDescription
             }
