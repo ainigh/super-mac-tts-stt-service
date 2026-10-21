@@ -332,6 +332,7 @@ struct ChatsView: View {
     @State private var query = ""
     @State private var selected: UUID?
     @State private var confirmDelete: LibraryRecord?
+    @FocusState private var searching: Bool
 
     private var chats: [LibraryRecord] {
         library.filter(kind: .chat, query: query, starredOnly: false)
@@ -415,6 +416,7 @@ struct ChatsView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField("Search the chats", text: $query).textFieldStyle(.plain)
+                .focused($searching)
             if !query.isEmpty {
                 Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless).foregroundStyle(.secondary)
             }
@@ -423,6 +425,8 @@ struct ChatsView: View {
         .padding(.vertical, 6)
         .background(Color.primary.opacity(0.06), in: Capsule())
         .frame(maxWidth: 320)
+        .background(Button("") { searching = true }.keyboardShortcut("f", modifiers: .command).hidden())
+        .help("Search (⌘F)")
     }
 
     private var list: some View {
