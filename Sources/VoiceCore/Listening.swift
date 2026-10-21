@@ -43,7 +43,7 @@ public enum TurnEnd {
 /// and only when it's clearly not the answer (three new words or more, most of what was heard).
 public enum Echo {
     /// Words that stop it said first, even alone.
-    static let bargeWords: Set<String> = ["stop", "wait", "mouse", "hold", "quiet", "pause", "enough"]
+    static let bargeWords: Set<String> = ["stop", "wait", "tom", "hold", "quiet", "pause", "enough"]
     /// Short words that tell nothing apart.
     static let stopWords: Set<String> = ["a", "an", "the", "and", "or", "of", "to", "in", "on", "at", "for", "is", "it",
                                          "i", "my", "me", "be", "was", "are", "this", "that", "with", "by", "as", "so", "s"]

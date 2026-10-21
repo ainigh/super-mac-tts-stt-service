@@ -8,7 +8,7 @@ A menu bar app for the Mac that does speech, offline, and does it well:
 - **Transcribe**: drop audio or video files, get their text (and subtitles), kept with the rest.
 - **Library**: everything kept, in a grid: search, filter, star, open to edit, read it back, copy,
   save as .txt / .srt / .vtt, delete.
-- **AI listen**: talk with [Ollama](https://ollama.com) by voice: click the tile and talk, or say **"mouse"**,
+- **AI listen**: talk with [Ollama](https://ollama.com) by voice: click the tile and talk, or say **"Tom"**,
   then talk; the answer is read back. Talk over it to stop it. It turns off after three minutes with
   nothing said, with a sound as it does.
 - **Skills**: what the model can use besides talking, each switched on or off beside the panel:
@@ -31,8 +31,8 @@ listen; everything else works without it.
 
 Click the panel's **AI listen** tile and just talk: no wake word, and no window to open (the chat
 works all the same; it shows in the **AI library**, and right-click the tile for its window and
-settings). Or, with **Listen** on (the ear), say **"mouse"**, then talk: "mouse, what's a good name
-for a cat?" starts it and asks. "Mouse" is the only thing always listening acts on. From then on
+settings). Or, with **Listen** on (the ear), say **"Tom"**, then talk: "Tom, what's a good name
+for a cat?" starts it and asks. "Tom" is the only thing always listening acts on. From then on
 everything you say goes to Ollama and the answer is read back, until three minutes pass with
 nothing said (one to ten minutes, in its window), when it plays its off sound (always, sounds on or
 off) and turns itself off. Saying "goodbye" plays it too.
@@ -43,10 +43,12 @@ off) and turns itself off. Saying "goodbye" plays it too.
 - **Barge in**: it keeps listening while it talks, so you can cut in. Its microphone and its voice
   share one audio engine with Apple's voice processing (echo cancellation, as in FaceTime), so
   Kokoro's voice is taken back out of what the microphone hears and it doesn't hear itself. What
-  little leaks through is told apart by its words: "stop", "wait" or "mouse" said first always
+  little leaks through is told apart by its words: "stop", "wait" or "Tom" said first always
   cuts in; anything else only when it's clearly you (three new words or more). Where echo
   cancellation isn't available (some audio devices; the window says so), only those words cut in.
-  Turn **Barge in** off in its window and it stops listening while it talks.
+  Voice processing is only on while AI Listen runs, and if the microphone gives only silence with
+  it, it's turned off by itself (until the app starts again); **Echo** in its window turns it off
+  for good. Turn **Barge in** off and it stops listening while it talks.
 - **"Stop"** stops it talking. **"New chat"** starts over. **"Goodbye"** (or "that's all") turns it
   off. You can type instead of talking.
 - Each start is a **new chat**, kept in the **AI library** as it goes. The model sees only the chat
@@ -136,7 +138,7 @@ install line again works too.
 
 Click the waveform in the menu bar:
 
-- **Listen**: always listen for "mouse" (see below). The rectangles: show the skills. **Start / Stop**: serving the API (the tools keep working
+- **Listen**: always listen for "Tom" (see below). The rectangles: show the skills. **Start / Stop**: serving the API (the tools keep working
   either way).
 - **Read aloud, Dictate, Transcribe, Library, AI listen, AI library**: the tools, each in its own
   window.
@@ -151,8 +153,8 @@ Click the waveform in the menu bar:
 
 ## Always listen
 
-**Listen** (the ear, next to Start) keeps the microphone open for one word: **"mouse"**, which starts
-AI Listen (see above); "mouse, …" said in one go asks it straight away. Nothing else said is acted
+**Listen** (the ear, next to Start) keeps the microphone open for one word: **"Tom"**, which starts
+AI Listen (see above); "Tom, …" said in one go asks it straight away. Nothing else said is acted
 on or kept, and nothing is heard while dictating, while the Mac speaks itself, or while AI Listen
 has the microphone. (The board's voice commands and note from before are gone; the note stays in
 the library, as a note called "Board".)

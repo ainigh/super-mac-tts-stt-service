@@ -16,6 +16,8 @@ struct AssistantSettings: Codable, Equatable {
     var thinking = false
     /// Talking over the answer stops it and is heard (barge in); off, it doesn't listen while it talks.
     var bargeIn = true
+    /// Its voice is taken out of what the microphone hears (Apple's voice processing).
+    var echoCancel = true
     /// 2: the turn-off went from a minute to three by default.
     var version = 2
 
@@ -31,13 +33,14 @@ struct AssistantSettings: Codable, Equatable {
         toolRunURL = try c.decodeIfPresent(String.self, forKey: .toolRunURL) ?? d.toolRunURL
         thinking = try c.decodeIfPresent(Bool.self, forKey: .thinking) ?? d.thinking
         bargeIn = try c.decodeIfPresent(Bool.self, forKey: .bargeIn) ?? d.bargeIn
+        echoCancel = try c.decodeIfPresent(Bool.self, forKey: .echoCancel) ?? d.echoCancel
         // Saved when a minute was the default: it's three now.
         if (try c.decodeIfPresent(Int.self, forKey: .version) ?? 1) < 2, idleSeconds == 60 { idleSeconds = d.idleSeconds }
     }
 }
 
-/// AI Listen: a conversation with Ollama by voice. With always listen on, it hears only "mouse",
-/// which starts it ("mouse, what's…" asks straight away); clicking the panel's tile starts it too.
+/// AI Listen: a conversation with Ollama by voice. With always listen on, it hears only "Tom",
+/// which starts it ("Tom, what's…" asks straight away); clicking the panel's tile starts it too.
 /// On, everything said goes to the model and the answer is read back, until three minutes (by
 /// default) pass with nothing said, when it plays its off sound and turns itself off. Talking over
 /// the answer stops it (barge in). Each start is a new chat, kept in the AI library as it goes; the
@@ -57,12 +60,12 @@ final class AssistantModel: ObservableObject {
     }
 
     @Published private(set) var on = false
-    /// While it's off, listening for "mouse" (and wanted so across launches).
+    /// While it's off, listening for "Tom" (and wanted so across launches).
     @Published private(set) var alwaysListen: Bool
     @Published private(set) var thinking = false
     /// What the listener is hearing right now, before the pause that ends it.
     @Published private(set) var hearing = ""
-    /// What the always-listener is hearing (only "mouse" is acted on).
+    /// What the always-listener is hearing (only "Tom" is acted on).
     @Published private(set) var wakeHearing = ""
     /// This chat, as it stands (a question shows as soon as it's asked).
     @Published private(set) var turns: [ChatTurn] = []
@@ -89,7 +92,7 @@ final class AssistantModel: ObservableObject {
     /// Its own voice, so stopping it stops nothing else.
     let voice = SpeechPlayer(shared: AssistantModel.echo)
     let listener = Recorder(pauseToEnd: 1.2, holdIfUnfinished: TurnEnd.hold, shared: AssistantModel.echo)
-    /// Always listen: hears "mouse" while it's off.
+    /// Always listen: hears "Tom" while it's off.
     let wakeListener = Recorder(pauseToEnd: 1.0, holdIfUnfinished: TurnEnd.hold)
     /// The sound it makes as it turns off.
     static let offSound = "Submarine"
@@ -127,6 +130,7 @@ final class AssistantModel: ObservableObject {
             loaded = saved
         }
         settings = loaded
+        Self.echo.wanted = loaded.echoCancel
         alwaysListen = defaults.bool(forKey: "alwaysListen")
         sounds = defaults.object(forKey: "assistantSounds") as? Bool ?? true
         client = OllamaClient(baseURL: loaded.ollamaURL)
@@ -165,7 +169,7 @@ final class AssistantModel: ObservableObject {
             .store(in: &watching)
     }
 
-    /// At launch: listen for "mouse" if it was.
+    /// At launch: listen for "Tom" if it was.
     func launch() {
         refreshListening()
     }
@@ -203,7 +207,7 @@ final class AssistantModel: ObservableObject {
     }
 
     /// Stops, with its off sound first: the microphone closes and the voice stops. The chat stays
-    /// in the AI library. Always listen carries on listening for "mouse".
+    /// in the AI library. Always listen carries on listening for "Tom".
     func stop(reason: String? = nil) {
         guard on else { return }
         NSSound(named: NSSound.Name(Self.offSound))?.play()
@@ -229,7 +233,7 @@ final class AssistantModel: ObservableObject {
         on ? stop(reason: "Turned off") : start()
     }
 
-    /// Always listen for "mouse" (the ear on the panel).
+    /// Always listen for "Tom" (the ear on the panel).
     func setAlwaysListen(_ want: Bool) {
         alwaysListen = want
         UserDefaults.standard.set(want, forKey: "alwaysListen")
@@ -262,7 +266,7 @@ final class AssistantModel: ObservableObject {
 
     // MARK: Hearing
 
-    /// Always listening, while off: only "mouse" counts, alone or first.
+    /// Always listening, while off: only "Tom" counts, alone or first.
     private func wakeHeard(_ utterance: String) {
         guard !on, alwaysListen, !micBusy else { return }
         switch Assistant.hear(utterance, awake: false) {
@@ -500,6 +504,7 @@ final class AssistantModel: ObservableObject {
         chat?.model = s.model
         chat?.quick = !s.thinking
         client.thinking = s.thinking
+        Self.echo.wanted = s.echoCancel
         adviseOnThinking()
         refreshListening()
         if newModel, on { warmUp() }

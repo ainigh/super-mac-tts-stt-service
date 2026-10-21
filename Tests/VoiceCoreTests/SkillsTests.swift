@@ -59,7 +59,7 @@ final class SkillsTests: XCTestCase {
         XCTAssertTrue(TurnEnd.unfinished("Tell me about the weather"))
         XCTAssertFalse(TurnEnd.unfinished("What's the weather like in Lima?"))
         XCTAssertFalse(TurnEnd.unfinished("Tell me a joke."))
-        XCTAssertFalse(TurnEnd.unfinished("Mouse."))
+        XCTAssertFalse(TurnEnd.unfinished("Tom."))
         XCTAssertFalse(TurnEnd.unfinished("Stop"))
         XCTAssertFalse(TurnEnd.unfinished("New chat"))
         XCTAssertFalse(TurnEnd.unfinished(""))

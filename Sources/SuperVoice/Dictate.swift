@@ -60,6 +60,8 @@ final class Recorder: ObservableObject {
     private var ticker: Timer?
     /// What was said sounded unfinished: when it's sent anyway, if nothing more is said.
     private var holdTimer: Timer?
+    /// Any sound at all (not digital silence) has come from the microphone since it opened.
+    private var signal = false
     /// Asked to listen (start) and not since stopped: the microphone opens only if still wanted
     /// once permission comes back.
     private var wanted = false
@@ -127,7 +129,9 @@ final class Recorder: ObservableObject {
         rewiring = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine,
                                                           queue: .main) { [weak self] _ in self?.rewire() }
         cutter = PhraseCutter(pause: pauseToEnd ?? 0.8)
+        signal = false
         on = true
+        watchForSilence()
         started = Date()
         finishing = false
         ticker = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in self?.guessLive() }
@@ -136,6 +140,8 @@ final class Recorder: ObservableObject {
 
     /// Taps the microphone and starts the engine; nil, or what went wrong.
     private func openMic() -> String? {
+        // Voice processing changes the microphone's format: on first, then the format is read.
+        echo?.prepare()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { return "No microphone found" }
@@ -163,6 +169,9 @@ final class Recorder: ObservableObject {
     /// The microphone changed: the engine has stopped, so start it again on the new one.
     private func rewire() {
         guard on else { return }
+        // Voice processing starting up changes the configuration too, with the engine still
+        // running: nothing to do (starting again would only change it again, round and round).
+        if echo != nil, engine.isRunning { return }
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
         if let problem = openMic() {
@@ -177,8 +186,10 @@ final class Recorder: ObservableObject {
         let samples = resampler?.convert(buffer) ?? []
         lock.unlock()
         let l = Self.level(buffer)
+        let live = Self.anySound(buffer)
         DispatchQueue.main.async {
             guard self.on else { return }
+            if live { self.signal = true }
             self.level = self.level * 0.5 + l * 0.5
             self.heardSeconds += Double(samples.count) / Double(PCM.listenRate)
             for phrase in self.cutter.add(samples) {
@@ -283,6 +294,34 @@ final class Recorder: ObservableObject {
         if a.isEmpty { return b }
         if b.isEmpty { return a }
         return a + " " + b
+    }
+
+    /// Echo cancelled, a microphone that gives nothing but silence (some devices, with voice
+    /// processing) would never hear anything: after five seconds of it, voice processing is given
+    /// up and the microphone opened again without it.
+    private func watchForSilence() {
+        guard let echo, echo.cancelsEcho else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self, self.on, !self.signal, echo.cancelsEcho else { return }
+            self.closeMic()
+            echo.giveUp()
+            if let problem = self.openMic() {
+                self.problem = problem
+                return
+            }
+            self.on = true
+            self.started = Date()
+            self.ticker = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in self?.guessLive() }
+            self.rewiring = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: self.engine,
+                                                                   queue: .main) { [weak self] _ in self?.rewire() }
+        }
+    }
+
+    /// Anything but digital silence in the buffer.
+    static func anySound(_ buffer: AVAudioPCMBuffer) -> Bool {
+        guard let data = buffer.floatChannelData?[0] else { return false }
+        for i in 0..<Int(buffer.frameLength) where abs(data[i]) > 1e-7 { return true }
+        return false
     }
 
     /// Loudness of a buffer, 0 (quiet) to 1 (loud), on a decibel scale.

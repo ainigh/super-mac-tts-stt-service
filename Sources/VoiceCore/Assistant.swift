@@ -1,16 +1,16 @@
 import Foundation
 
-/// The assistant, Mouse: a conversation with Ollama by voice. Said alone, the wake word ("mouse")
+/// The assistant, Tom: a conversation with Ollama by voice. Said alone, the wake word ("Tom")
 /// wakes it; said first, what follows is the first question. Awake, everything said goes to the
 /// model and the answer is read back. A few words are commands instead ("stop", "new chat",
 /// "goodbye"). The platform does the listening and speaking; this is what's said, and what's sent.
 public enum Assistant {
-    public static let name = "Mouse"
+    public static let name = "Tom"
 
     /// What wakes it, as the recognizer tends to write it (any of these, alone or first). Nothing
-    /// else does: always listening, only "mouse" is ever acted on.
-    public static let wakeWords: [[String]] = [["mouse"], ["mousse"], ["mouses"], ["mause"], ["maus"]]
-    /// "Hey mouse", "okay mouse": these may come before the wake word.
+    /// else does: always listening, only "Tom" is ever acted on.
+    public static let wakeWords: [[String]] = [["tom"], ["thom"], ["tomm"], ["tum"]]
+    /// "Hey Tom", "okay Tom": these may come before the wake word.
     static let greetings: Set<String> = ["hey", "hi", "hello", "ok", "okay", "yo"]
 
     public enum Command: Equatable, Sendable {
