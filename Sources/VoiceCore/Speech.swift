@@ -21,7 +21,8 @@ public enum SpokenText {
                     }
                     let atEnd = i + 1 >= chars.count
                     let spaceNext = !atEnd && chars[i + 1].isWhitespace
-                    if (spaceNext || atEnd) && !(c == "." && endsWithAbbreviation(current)) {
+                    let nextWord = String(chars[(i + 1)...].drop(while: \.isWhitespace).prefix { !$0.isWhitespace })
+                    if (spaceNext || atEnd) && !(c == "." && endsWithAbbreviation(current, next: nextWord)) {
                         push(&out, current)
                         current = ""
                     }
@@ -36,12 +37,15 @@ public enum SpokenText {
     private static let abbreviations: Set<String> = ["e.g.", "i.e.", "etc.", "vs.", "mr.", "mrs.", "ms.", "dr.",
                                                      "st.", "no.", "approx.", "fig.", "p.m.", "a.m."]
 
-    private static func endsWithAbbreviation(_ s: String) -> Bool {
-        guard let last = s.split(whereSeparator: \.isWhitespace).last?.lowercased() else { return false }
-        let word = last.trimmingCharacters(in: CharacterSet(charactersIn: "(\"'"))
+    private static func endsWithAbbreviation(_ s: String, next: String) -> Bool {
+        guard let last = s.split(whereSeparator: \.isWhitespace).last else { return false }
+        let original = last.trimmingCharacters(in: CharacterSet(charactersIn: "(\"'"))
+        let word = original.lowercased()
+        // "No. 5" is a number; "No. I'm busy." is an answer.
+        if word == "no." { return next.first?.isNumber == true }
         if abbreviations.contains(word) { return true }
         // A single capital and a dot ("J. Smith") is an initial.
-        return word.count == 2 && word.first!.isLetter
+        return original.count == 2 && original.first!.isUppercase
     }
 
     private static func push(_ out: inout [String], _ s: String) {
@@ -108,7 +112,7 @@ public struct TimedWord: Equatable, Sendable {
 public enum Captions {
     public static func plain(_ segments: [TimedText]) -> String {
         segments.map(\.text).joined(separator: " ")
-            .replacingOccurrences(of: "  ", with: " ")
+            .replacingOccurrences(of: " {2,}", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

@@ -123,7 +123,7 @@ public enum Assistant {
         text = text.replacingOccurrences(of: #"`([^`]*)`"#, with: "$1", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(\*\*|__)(.+?)\1"#, with: "$2", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(?<![\p{L}\p{N}])[*_](?=\S)(.+?)(?<=\S)[*_](?![\p{L}\p{N}])"#, with: "$1", options: .regularExpression)
-        text = text.replacingOccurrences(of: #"[*#]+"#, with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(?<![\p{L}\p{N}])[*#]+"#, with: "", options: .regularExpression)
         text = text.replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
