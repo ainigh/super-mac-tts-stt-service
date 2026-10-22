@@ -9,7 +9,7 @@ A menu bar app for the Mac that does speech, offline, and does it well:
 - **Library**: everything kept, in a grid: search, filter, star, open to edit, read it back, copy,
   save as .txt / .srt / .vtt, delete.
 - **AI listen**: talk with [Ollama](https://ollama.com) by voice: click the tile and talk, or say **"Tom"**
-  (or wave at the camera), then talk; the answer is read back. Talk over it to stop it. It turns off
+  (or wave at the camera), then talk; the answer is read back. Wave, or press Stop talking, to stop it (or turn **Barge in** on and talk over it). It turns off
   after three minutes with nothing said, with a sound as it does. Soft sounds every few seconds say
   what it's working on.
 - **Tom and Jerry**: a second assistant, Jerry, with his own model and voice. Ask Tom to bring him in
@@ -44,15 +44,20 @@ off) and turns itself off. Saying "goodbye" plays it too.
 - **Pauses**: a pause ends what you said, unless it sounds unfinished ("…and the", "…because",
   a trailing comma, no full stop): then it waits a moment longer for the rest. And if more comes
   while the model is still working on the first half, the two are asked as one question.
-- **Barge in**: it keeps listening while it talks, so you can cut in. Its microphone and its voice
-  share one audio engine with Apple's voice processing (echo cancellation, as in FaceTime), so
-  Kokoro's voice is taken back out of what the microphone hears and it doesn't hear itself. What
-  little leaks through is told apart by its words: "stop", "wait" or "Tom" said first always
-  cuts in; anything else only when it's clearly you (three new words or more). Where echo
-  cancellation isn't available (some audio devices; the window says so), only those words cut in.
-  Voice processing is only on while AI Listen runs, and if the microphone gives only silence with
-  it, it's turned off by itself (until the app starts again); **Echo** in its window turns it off
-  for good. Turn **Barge in** off and it stops listening while it talks.
+- **While it talks** it doesn't listen (so nothing you say then is taken for its own voice coming
+  back and thrown away); the **Stop talking** button, a wave at the camera, or waiting for it to
+  finish, and then talk. **Barge in** (off unless you turn it on, in its window) keeps it listening
+  while it talks, so you can cut in: what it hears then is told apart by its words: "stop", "wait"
+  or "Tom" said first always cuts in; with echo cancellation on, anything else too when it's
+  clearly you (three new words or more); the rest is dropped as its own voice. Headphones help.
+- **Echo cancellation** (off unless you turn it on, **Echo** in its window, from the next start):
+  its microphone and its voice share one audio engine with Apple's voice processing (as in
+  FaceTime), so Kokoro's voice is taken back out of what the microphone hears and it doesn't hear
+  itself. It's off by default because on some Macs the microphone it gives is heard (the meter
+  moves) but nothing is understood; the plain microphone is heard everywhere. Voice processing is
+  only on while AI Listen runs, and if the microphone gives only silence with it, it's turned off by
+  itself (until the app starts again). Where it isn't available (some audio devices), the window
+  says so.
 - **Not hearing you?** Every phrase it cuts is logged as it's written down (Console.app, search for
   `phrase`): how long and how loud it was, and what came of it. A meter that moves with nothing
   logged means no phrase was cut; a phrase `written: ""` means the recognizer made nothing of it.

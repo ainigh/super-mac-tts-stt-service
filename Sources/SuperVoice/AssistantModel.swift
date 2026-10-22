@@ -14,10 +14,14 @@ struct AssistantSettings: Codable, Equatable {
     var toolRunURL = ToolRunClient.defaultURL
     /// Let the model think before answering (slower). Off: turned off as far as it goes.
     var thinking = false
-    /// Talking over the answer stops it and is heard (barge in); off, it doesn't listen while it talks.
-    var bargeIn = true
-    /// Its voice is taken out of what the microphone hears (Apple's voice processing).
-    var echoCancel = true
+    /// Talking over the answer stops it and is heard (barge in); off, it doesn't listen while it
+    /// talks. Off unless asked for: without echo cancellation, what's heard while it talks is kept
+    /// only if it's "stop", "wait" or "Tom", and the rest is thrown away, which gets in the way.
+    var bargeIn = false
+    /// Its voice is taken out of what the microphone hears (Apple's voice processing). Off unless
+    /// asked for: with it on, the microphone it gives has been heard but not understood on some
+    /// Macs, while the plain microphone is heard everywhere.
+    var echoCancel = false
     /// Jerry's model; empty: the same as Tom's.
     var jerryModel = ""
     /// Jerry's voice (its id); empty: the first voice of the other kind from Tom's.
@@ -28,8 +32,9 @@ struct AssistantSettings: Codable, Equatable {
     var workingSounds = true
     /// Its voices are told from yours by how they sound (voice prints), not only by the words.
     var voicePrints = true
-    /// 2: the turn-off went from a minute to three by default.
-    var version = 2
+    /// 2: the turn-off went from a minute to three by default. 3: voice processing went from on to
+    /// off by default. 4: so did barge in.
+    var version = 4
 
     init() {}
 
@@ -49,8 +54,13 @@ struct AssistantSettings: Codable, Equatable {
         wave = try c.decodeIfPresent(Bool.self, forKey: .wave) ?? d.wave
         workingSounds = try c.decodeIfPresent(Bool.self, forKey: .workingSounds) ?? d.workingSounds
         voicePrints = try c.decodeIfPresent(Bool.self, forKey: .voicePrints) ?? d.voicePrints
+        let version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
         // Saved when a minute was the default: it's three now.
-        if (try c.decodeIfPresent(Int.self, forKey: .version) ?? 1) < 2, idleSeconds == 60 { idleSeconds = d.idleSeconds }
+        if version < 2, idleSeconds == 60 { idleSeconds = d.idleSeconds }
+        // Saved when voice processing was on by default (so on was never chosen): off, as now.
+        if version < 3 { echoCancel = d.echoCancel }
+        // The same for barge in.
+        if version < 4 { bargeIn = d.bargeIn }
     }
 }
 
