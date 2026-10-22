@@ -53,6 +53,9 @@ off) and turns itself off. Saying "goodbye" plays it too.
   Voice processing is only on while AI Listen runs, and if the microphone gives only silence with
   it, it's turned off by itself (until the app starts again); **Echo** in its window turns it off
   for good. Turn **Barge in** off and it stops listening while it talks.
+- **Not hearing you?** Every phrase it cuts is logged as it's written down (Console.app, search for
+  `phrase`): how long and how loud it was, and what came of it. A meter that moves with nothing
+  logged means no phrase was cut; a phrase `written: ""` means the recognizer made nothing of it.
 - **"Stop"** stops it talking. **"New chat"** starts over. **"Goodbye"** (or "that's all") turns it
   off. You can type instead of talking.
 - **Voice prints**: on top of echo cancellation and the words, its voices are told from yours by how

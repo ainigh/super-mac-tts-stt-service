@@ -244,14 +244,25 @@ final class Resampler {
     static let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(PCM.listenRate),
                                       channels: 1, interleaved: false)!
     private let converter: AVAudioConverter?
+    /// What it converts from: a buffer in any other format must not be given to it.
+    let inputFormat: AVAudioFormat
+    /// Conversions that gave nothing back, counted so the first few are logged (not every buffer).
+    private var failures = 0
 
     init(from format: AVAudioFormat) {
+        inputFormat = format
         converter = AVAudioConverter(from: format, to: Self.target)
         converter?.downmix = true
+        if converter == nil { NSLog("Microphone: no converter from %@ to 16 kHz mono", format) }
     }
 
     func convert(_ buffer: AVAudioPCMBuffer) -> [Float] {
         guard let converter, buffer.frameLength > 0 else { return [] }
+        guard buffer.format == inputFormat else {
+            failures += 1
+            if failures <= 3 { NSLog("Microphone: a buffer in %@, not %@: dropped", buffer.format, inputFormat) }
+            return []
+        }
         let ratio = Self.target.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
         guard let out = AVAudioPCMBuffer(pcmFormat: Self.target, frameCapacity: capacity) else { return [] }
@@ -266,7 +277,11 @@ final class Resampler {
             status.pointee = .haveData
             return buffer
         }
-        guard error == nil, let data = out.floatChannelData?[0] else { return [] }
+        guard error == nil, let data = out.floatChannelData?[0] else {
+            failures += 1
+            if failures <= 3 { NSLog("Microphone: converting %u frames failed: %@", buffer.frameLength, error?.localizedDescription ?? "nothing came out") }
+            return []
+        }
         return Array(UnsafeBufferPointer(start: data, count: Int(out.frameLength)))
     }
 }
