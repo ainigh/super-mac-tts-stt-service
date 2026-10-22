@@ -121,6 +121,7 @@ struct PanelView: View {
                                : "Talk with Ollama now: just talk, no wake word. Right-click for its window and settings.")
             .contextMenu {
                 Button("Open AI Listen window") { close(); Windows.show(.assistant) }
+                Button("Open Tom's memory") { close(); Windows.show(.memory) }
                 Button(assistant.alwaysListen ? "Stop listening for “\(Assistant.wakeWords[0][0])”" : "Always listen for “\(Assistant.wakeWords[0][0])”") {
                     assistant.setAlwaysListen(!assistant.alwaysListen)
                 }

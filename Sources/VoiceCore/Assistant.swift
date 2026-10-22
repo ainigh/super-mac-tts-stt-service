@@ -279,7 +279,7 @@ public enum AssistantTools {
     /// The tool a name means: itself, or the one it's a common slip for.
     public static func canonical(_ name: String) -> String {
         let n = name.lowercased().trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: " ", with: "_")
-        return aliases[n] ?? Team.aliases()[n] ?? n
+        return aliases[n] ?? JobTools.aliases()[n] ?? Memory.aliases[n] ?? n
     }
 
     /// The answer says something was added to or changed in the library ("I've added it to your notes").
@@ -296,6 +296,9 @@ public enum AssistantTools {
     did it, so nothing was saved. If the user asked for it, call add_note or update_library now. Otherwise \
     answer again without saying it was saved.
     """
+
+    /// What the model is told when the user refused a tool it proposed.
+    public static let rejectedMessage = "Rejected by the user: the tool wasn't run. Go on without it: try another way, ask Tom if you can't, or finish with what you have (say what was left undone)."
 
     /// How the model is told to call a tool, and what the tools are.
     public static func manual(_ tools: [Tool]) -> String {
@@ -568,12 +571,22 @@ public final class Conversation {
     public var name = Assistant.name
     /// Its place in the team, when there is one (see `Team`).
     public var team: TeamRole?
-    /// Messages between the two with nothing from the user, so far (the app counts; see `maxHops`).
-    public var hops = 0
-    /// At this many, `tell_jerry` is refused and Tom is told to come back to the user.
-    public var maxHops = Team.maxHops
     /// What it's doing, as it does it (off the main thread): the model, a tool, or nothing.
     public var onActivity: ((Activity) -> Void)?
+    /// More for the system prompt, from the app, read afresh each time it's sent: Tom's memory and
+    /// the open jobs; Jerry's standing instructions.
+    public var extraPrompt: (() -> String)?
+    /// Tools the app runs (Tom's memory, a job's status): listed with the others, answered by `custom`.
+    public var extraTools: [AssistantTools.Tool] = []
+    /// Runs one of `extraTools` (by its name, with its arguments): what the model is told.
+    public var custom: ((String, [String: Any]) async -> String?)?
+    /// Whether a tool call must wait for the user's approval before it runs (by the tool's name).
+    public var needsApproval: ((String) -> Bool)?
+    /// Asks the user (and waits): true runs the tool, false refuses it and tells the model so.
+    public var approval: ((AssistantTools.Call) async -> Bool)?
+    /// What the model says alongside a tool call ("I'll search for a focus playlist"), as it does:
+    /// Jerry's words while he works, for the user to hear.
+    public var onNarration: ((String) -> Void)?
     private var wire: [[String: Any]] = []
 
     /// One of the two in the team.
@@ -590,25 +603,36 @@ public final class Conversation {
         case model
         /// Running a tool (its name).
         case tool(String)
+        /// Waiting for the user to approve a tool (its name).
+        case approval(String)
     }
 
-    /// An answer: what to read to the user (maybe nothing), and what to hand to the teammate, if
-    /// anything (read out first, then delivered).
+    /// What a turn ended with, besides words: a job move the app carries out (the tool call that
+    /// made it ended the turn).
+    public enum Action: Equatable, Sendable {
+        /// Tom hands Jerry a job.
+        case delegate(Job.Spec)
+        /// Tom tells Jerry something about a job (an answer, or why it's sent back).
+        case message(job: String, text: String)
+        /// Tom drops a job.
+        case cancel(job: String)
+        /// Jerry asks Tom; the job waits.
+        case ask(question: String)
+        /// Jerry finished the job.
+        case finish(Job.Result)
+    }
+
+    /// An answer: what to read to the user (maybe nothing), and the job move it ended with, if any.
     public struct Reply: Equatable, Sendable {
         public var text: String
-        /// A message to the teammate, by name.
-        public var handoff: (to: String, message: String)?
-        /// It chose to say nothing (its teammate's answer did the job).
+        public var action: Action?
+        /// It chose to say nothing (nothing needed saying).
         public var silent = false
 
-        public init(text: String, handoff: (to: String, message: String)? = nil, silent: Bool = false) {
+        public init(text: String, action: Action? = nil, silent: Bool = false) {
             self.text = text
-            self.handoff = handoff
+            self.action = action
             self.silent = silent
-        }
-
-        public static func == (a: Reply, b: Reply) -> Bool {
-            a.text == b.text && a.silent == b.silent && a.handoff?.to == b.handoff?.to && a.handoff?.message == b.handoff?.message
         }
     }
 
@@ -637,30 +661,38 @@ public final class Conversation {
         c.maxToolRounds = maxToolRounds
         c.name = name
         c.team = team
-        c.hops = hops
-        c.maxHops = maxHops
         c.onActivity = onActivity
+        c.extraPrompt = extraPrompt
+        c.extraTools = extraTools
+        c.custom = custom
+        c.needsApproval = needsApproval
+        c.approval = approval
+        c.onNarration = onNarration
         return c
     }
 
-    /// The skills on, and with what they need.
+    /// The skills on, and with what they need. Tom with Jerry has the team alone: the work is
+    /// Jerry's, with the tools; Jerry has every skill but the team.
     public var activeSkills: [Skill] {
         Skills.all.filter { s in
+            if case .lead = team { return s.id == Skills.team.id }
             guard enabled.contains(s.id) else { return false }
             switch s.id {
             case Skills.editing.id: return save != nil
             case Skills.scripts.id: return runner != nil
             case Skills.browser.id, Skills.files.id, Skills.clipboard.id, Skills.mac.id, Skills.app.id: return skills != nil
-            case Skills.team.id:
-                if case .lead = team { return true }
-                return false
+            case Skills.team.id: return false
             default: return true
             }
         }
     }
 
     /// The tools the model may call.
-    public var tools: [AssistantTools.Tool] { activeSkills.flatMap { Skills.tools($0.id, sites: skills?.sites ?? [], teammate: teammate ?? Team.teammate) } }
+    public var tools: [AssistantTools.Tool] {
+        var t = activeSkills.flatMap { Skills.tools($0.id, sites: skills?.sites ?? [], teammate: teammate ?? Team.teammate) }
+        if case .member(let lead) = team { t += JobTools.worker(lead: lead) }
+        return t + extraTools
+    }
 
     /// The teammate's name, when there is one (the lead's).
     public var teammate: String? {
@@ -668,8 +700,44 @@ public final class Conversation {
         return nil
     }
 
-    /// `tell_jerry`, when it may be used.
-    var handoffTool: String? { teammate.map { "tell_\($0.lowercased())" } }
+    /// The tools whose call ends the turn, by name, each with the job move it makes.
+    var terminalTools: [String] {
+        switch team {
+        case .lead(let t): return ["delegate", "message_\(t.lowercased())", "cancel_job"]
+        case .member(let l): return ["ask_\(l.lowercased())", "finish"]
+        case nil: return []
+        }
+    }
+
+    /// The move a terminal call makes, or what to tell the model when its arguments don't make one.
+    enum Move {
+        case act(Action)
+        case refuse(String)
+    }
+
+    func move(for name: String, _ args: [String: Any]) -> Move {
+        switch name {
+        case "delegate":
+            guard let spec = JobTools.spec(args) else { return .refuse("Give the job's goal (and done_criteria, and what to return).") }
+            return .act(.delegate(spec))
+        case "cancel_job":
+            guard let id = JobTools.jobID(args) else { return .refuse("Give the job_id.") }
+            return .act(.cancel(job: JobBoard.normalize(id)))
+        case "finish":
+            guard let result = JobTools.result(args) else { return .refuse("Give the summary: what you found or did.") }
+            return .act(.finish(result))
+        default:
+            if name.hasPrefix("message_") {
+                guard let id = JobTools.jobID(args) else { return .refuse("Give the job_id.") }
+                guard let text = ToolRunTools.string(args["message"] ?? args["text"] ?? args["answer"] ?? args["question"]),
+                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .refuse("Give the message.") }
+                return .act(.message(job: JobBoard.normalize(id), text: text.trimmingCharacters(in: .whitespacesAndNewlines)))
+            }
+            guard let q = ToolRunTools.string(args["question"] ?? args["text"] ?? args["message"]),
+                  !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .refuse("Give the question.") }
+            return .act(.ask(question: q.trimmingCharacters(in: .whitespacesAndNewlines)))
+        }
+    }
 
     /// What the model is told before anything else.
     public func systemPrompt(now: Date = Date()) -> String {
@@ -692,6 +760,7 @@ public final class Conversation {
         case .member(let lead): p += Team.memberPrompt(lead: lead, me: name)
         case nil: break
         }
+        if let extraPrompt { p += extraPrompt() }
         let tools = self.tools
         if !tools.isEmpty {
             p += Skills.prompt(activeSkills.map(\.id))
@@ -724,20 +793,27 @@ public final class Conversation {
     /// Asks the model `text`, from the user or, by name, from the teammate. The answer: what to
     /// say, and what to hand to the teammate, if anything. The question and answer join the chat.
     public func reply(_ text: String, from: String? = nil, now: Date = Date()) async throws -> Reply {
+        try await reply(text, from: from, wake: false, now: now)
+    }
+
+    private func reply(_ text: String, from: String?, wake: Bool, now: Date) async throws -> Reply {
         let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let from {
+        // The question didn't take (below): it isn't part of the chat.
+        let before = wire.count
+        let turnsBefore = turns.count
+        if wake {
+            wire.append(["role": "user", "content": "(Nothing new from the user: act on the events above, or answer (nothing).)"])
+        } else if let from {
             turns.append(ChatTurn(role: .assistant, text: question, time: now, name: from, to: name))
             wire.append(["role": "user", "content": Self.stamped(Team.message(question, from: from), now: now)])
         } else {
             turns.append(ChatTurn(role: .user, text: question, time: now))
             wire.append(["role": "user", "content": Self.stamped(question, now: now)])
         }
-        let before = wire.count - 1
-        let turnsBefore = turns.count - 1
         defer { onActivity?(.idle) }
         do {
             var content = ""
-            var handoff: (to: String, message: String)?
+            var action: Action?
             var round = 0
             // The library as the tools see it (what they change shows at once).
             var records: [LibraryRecord]?
@@ -746,26 +822,32 @@ public final class Conversation {
                 onActivity?(.model)
                 let reply = try await send(now: now)
                 var calls = AssistantTools.calls(in: reply)
-                if let tool = handoffTool, let teammate, let i = calls.firstIndex(where: { AssistantTools.canonical($0.name) == tool }) {
+                let terminal = terminalTools
+                let ending = calls.firstIndex { terminal.contains(AssistantTools.canonical($0.name)) }
+                if !calls.isEmpty, ending == nil {
+                    // What it says alongside a call is said now (Jerry: "I'll search for it").
+                    let aside = AssistantTools.stripped(reply)
+                    if !aside.isEmpty { onNarration?(aside) }
+                }
+                if let i = ending {
                     let call = calls[i]
+                    let tool = AssistantTools.canonical(call.name)
                     toolCalls.append(tool)
-                    if hops < maxHops, let message = ToolRunTools.string(call.arguments["message"] ?? call.arguments["text"] ?? call.arguments["question"]),
-                       !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        // The floor goes to the teammate: what's said before is for the user, the
-                        // message is read out and then delivered (the app does that, once heard).
-                        handoff = (teammate, message.trimmingCharacters(in: .whitespacesAndNewlines))
+                    switch move(for: tool, call.arguments) {
+                    case .act(let move):
+                        // The turn ends here: what's said before is for the user; the move is the app's.
+                        action = move
                         content = AssistantTools.stripped(reply)
                         wire.append(["role": "assistant", "content": reply])
-                        break
+                    case .refuse(let why):
+                        round += 1
+                        wire.append(["role": "assistant", "content": reply])
+                        onToolUse?(ToolUse(name: tool, arguments: call.argumentsJSON, result: why))
+                        wire.append(["role": "user", "content": AssistantTools.resultMessage(call.name, why)])
+                        calls.remove(at: i)
+                        if calls.isEmpty { continue }
                     }
-                    // Refused (too many hops, or nothing to say): told so, like any tool.
-                    let result = hops < maxHops ? "Give the message to say to \(teammate)." : Team.tooManyHops(teammate: teammate, hops: hops)
-                    round += 1
-                    wire.append(["role": "assistant", "content": reply])
-                    onToolUse?(ToolUse(name: tool, arguments: call.argumentsJSON, result: result))
-                    wire.append(["role": "user", "content": AssistantTools.resultMessage(call.name, result)])
-                    calls.remove(at: i)
-                    if calls.isEmpty { continue }
+                    if action != nil { break }
                 }
                 if calls.isEmpty, !edited, !nudged, round < maxToolRounds,
                    activeSkills.contains(where: { $0.id == Skills.editing.id }), AssistantTools.claimsLibraryChange(reply) {
@@ -785,7 +867,19 @@ public final class Conversation {
                 if records == nil { records = library() }
                 for call in calls {
                     toolCalls.append(call.name)
-                    onActivity?(.tool(AssistantTools.canonical(call.name)))
+                    let name = AssistantTools.canonical(call.name)
+                    if let needsApproval, let approval, needsApproval(name), tools.contains(where: { $0.name == name }) {
+                        // It waits for the user; refused, the model is told so and goes on.
+                        onActivity?(.approval(name))
+                        let allowed = await approval(AssistantTools.Call(name: name, argumentsJSON: call.argumentsJSON))
+                        if !allowed {
+                            let result = AssistantTools.rejectedMessage
+                            onToolUse?(ToolUse(name: name, arguments: call.argumentsJSON, result: result))
+                            wire.append(["role": "user", "content": AssistantTools.resultMessage(call.name, result)])
+                            continue
+                        }
+                    }
+                    onActivity?(.tool(name))
                     let result = await run(call, library: &records!)
                     if ["add_note", "update_library"].contains(AssistantTools.canonical(call.name)), result.hasPrefix("Added") || result.hasPrefix("Done:") { edited = true }
                     onToolUse?(ToolUse(name: AssistantTools.canonical(call.name), arguments: call.argumentsJSON, result: result))
@@ -798,10 +892,10 @@ public final class Conversation {
                 answer = ""
                 silent = true
             }
-            if let handoff {
+            if let action {
                 if !answer.isEmpty { turns.append(ChatTurn(role: .assistant, text: answer, time: Date(), name: name)) }
-                turns.append(ChatTurn(role: .assistant, text: handoff.message, time: Date(), name: name, to: handoff.to))
-                return Reply(text: answer, handoff: handoff)
+                if let turn = turn(for: action) { turns.append(turn) }
+                return Reply(text: answer, action: action)
             }
             if answer.isEmpty, !silent { answer = "I don't have an answer to that." }
             turns.append(ChatTurn(role: .assistant, text: silent ? "(nothing)" : answer, time: Date(), name: name))
@@ -815,6 +909,40 @@ public final class Conversation {
         }
     }
 
+    /// A job move as it shows in the chat (who said what to whom).
+    func turn(for action: Action) -> ChatTurn? {
+        let other: String
+        switch team {
+        case .lead(let t): other = t
+        case .member(let l): other = l
+        case nil: return nil
+        }
+        switch action {
+        case .delegate(let spec): return ChatTurn(role: .assistant, text: spec.text, name: name, to: other)
+        case .message(let job, let text): return ChatTurn(role: .assistant, text: "\(job): \(text)", name: name, to: other)
+        case .cancel(let job): return ChatTurn(role: .assistant, text: "Cancel \(job).", name: name, to: other)
+        case .ask(let question): return ChatTurn(role: .assistant, text: question, name: name, to: other)
+        case .finish(let result): return ChatTurn(role: .assistant, text: result.summary, name: name)
+        }
+    }
+
+    /// What a turn-ending tool came to ("Created j17"), for the model's next turn.
+    public func toolResult(_ name: String, _ result: String) {
+        wire.append(["role": "user", "content": AssistantTools.resultMessage(name, result)])
+    }
+
+    /// Something that happened (a job's status, a tool Jerry proposed), as the model gets it with
+    /// its next turn: from the Mac, not the user, and no answer is owed.
+    public func event(_ text: String) {
+        wire.append(["role": "user", "content": "Event (from the Mac, not the user; no answer is owed: answer (nothing) if there's nothing to do or say): \(text)"])
+    }
+
+    /// Asks the model to act on the events given with `event` (and anything else waiting): nothing
+    /// new is said to it. The turn's words and move come back like any reply's.
+    public func wake(now: Date = Date()) async throws -> Reply {
+        try await reply("", from: nil, wake: true, now: now)
+    }
+
     /// Runs one tool call (only the tools of the skills that are on).
     func run(_ call: AssistantTools.Call, library records: inout [LibraryRecord]) async -> String {
         let tools = self.tools
@@ -822,6 +950,7 @@ public final class Conversation {
         let name = AssistantTools.canonical(call.name)
         guard tools.contains(where: { $0.name == name }) else { return AssistantTools.unknown(call.name, among: tools) }
         let args = call.arguments
+        if extraTools.contains(where: { $0.name == name }), let custom, let result = await custom(name, args) { return result }
         if let result = AssistantTools.run(name, args, library: records, current: id) { return result }
         if name == "show_app", let host = skills?.host { return await showApp(args, records: records, host: host) }
         if let (result, record) = AssistantTools.edit(name, args, library: records) {
@@ -878,7 +1007,7 @@ public final class Conversation {
 }
 
 /// A tool the model used: what it asked, and what it got.
-public struct ToolUse: Equatable, Sendable, Identifiable {
+public struct ToolUse: Codable, Equatable, Sendable, Identifiable {
     public var id = UUID()
     public var name: String
     public var arguments: String

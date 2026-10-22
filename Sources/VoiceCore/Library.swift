@@ -4,6 +4,8 @@ import Foundation
 public struct ChatTurn: Codable, Equatable, Sendable {
     public enum Role: String, Codable, Sendable {
         case user, assistant
+        /// The room itself: a job's status ("j17 done"), written by the app, said by nobody.
+        case system
     }
 
     public var role: Role
@@ -22,8 +24,14 @@ public struct ChatTurn: Codable, Equatable, Sendable {
         self.to = to
     }
 
-    /// Who said it, as shown: "You", "Tom", "Jerry".
-    public var speaker: String { role == .user ? "You" : (name ?? Assistant.name) }
+    /// Who said it, as shown: "You", "Tom", "Jerry" (a system line: "Room").
+    public var speaker: String {
+        switch role {
+        case .user: return "You"
+        case .system: return name ?? "Room"
+        case .assistant: return name ?? Assistant.name
+        }
+    }
 }
 
 /// Something written down and kept: a dictation, a file's transcript, text kept from Read aloud,
@@ -147,14 +155,14 @@ public final class LibraryStore {
 
     private func sort() { items.sort { $0.created > $1.created } }
 
-    static let encoder: JSONEncoder = {
+    public static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .iso8601
         e.outputFormatting = [.prettyPrinted, .sortedKeys]
         return e
     }()
 
-    static let decoder: JSONDecoder = {
+    public static let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .iso8601
         return d

@@ -34,7 +34,7 @@ public enum Skills {
 
     public static let app = Skill(id: "app", title: "This app", summary: "Opens Super Voice's own windows when you ask: the library (at an item, or searched), the AI library, Dictate, Read aloud, Transcribe, AI Listen, the panel", symbol: "macwindow")
 
-    public static let team = Skill(id: "team", title: Team.teammate, summary: "A second assistant, \(Team.teammate), with his own model and voice: ask \(Assistant.name) to bring him in, and the two talk it over out loud (you hear it all, and can cut in)", symbol: "person.2.fill")
+    public static let team = Skill(id: "team", title: Team.teammate, summary: "A second assistant, \(Team.teammate), with his own model and voice, who does the work: \(Assistant.name) hands him jobs and checks what comes back, and you hear them both (you talk to \(Assistant.name))", symbol: "person.2.fill")
 
     public static let all: [Skill] = [library, editing, browser, files, clipboard, mac, math, app, scripts, team]
     public static var ids: [String] { all.map(\.id) }
@@ -62,7 +62,8 @@ public enum Skills {
 
     /// The skill a tool belongs to.
     public static func skill(for tool: String) -> Skill? {
-        all.first { s in tools(s.id, sites: []).contains { $0.name == tool } } ?? (tool == "search_site" ? browser : nil)
+        if JobTools.worker().contains(where: { $0.name == tool }) { return team }
+        return all.first { s in tools(s.id, sites: []).contains { $0.name == tool } } ?? (tool == "search_site" ? browser : nil)
     }
 
     /// What the system prompt says about the skills that are on (the tools' manual comes after).

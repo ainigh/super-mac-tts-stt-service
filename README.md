@@ -12,9 +12,10 @@ A menu bar app for the Mac that does speech, offline, and does it well:
   (or wave at the camera), then talk; the answer is read back. Wave, or press Stop talking, to stop it (or turn **Barge in** on and talk over it). It turns off
   after three minutes with nothing said, with a sound as it does. Soft sounds every few seconds say
   what it's working on.
-- **Tom and Jerry**: a second assistant, Jerry, with his own model and voice. Ask Tom to bring him in
-  and the two talk it over out loud, in one room with you: cut in whenever you like, or talk to Jerry
-  by name. Jerry can be busy while you talk to Tom.
+- **Tom and Jerry**: a second assistant, Jerry, with his own model and voice, who does the work.
+  Tom hands him jobs with a spec, you hear them both, Jerry's tool calls that change something wait
+  for your approval, and Tom checks each result and sends it back if it misses. Tom learns from each
+  job into a memory you can read and edit, which also holds your standing instructions for both.
 - **Skills**: what the model can use besides talking, each switched on or off beside the panel:
   your library (reading, and adding or changing notes when you ask), your default browser (search,
   open pages, read and find text on them), files, the clipboard, the Mac's status, a calculator, and
@@ -85,19 +86,40 @@ off) and turns itself off. Saying "goodbye" plays it too.
 ### Tom and Jerry
 
 Turn the **Jerry** skill on (the panel's Skills column, or right-click the AI listen tile) and there
-are two of them in the room with you: **Tom**, who you talk to, and **Jerry**, a second assistant
-with his own model (the same as Tom's unless you pick another, in AI Listen's window) and his own
-voice (the first of the other kind from Tom's, unless you pick one). You tell Tom when to bring him
-in: "Tom, ask Jerry what he thinks", "hand this to Jerry", "have Jerry look it up". Tom says his
-message to Jerry out loud, in his voice, and only once you've heard it does it reach Jerry: cut in
-while it's being read and it doesn't (Tom is told, and goes on from what you say). Jerry works on it
-with the same skills, answers in his voice, and his answer reaches Tom the same way; Tom then tells
-you what's needed, carries on with Jerry if you asked for that, or says nothing when Jerry's answer
-already did the job. The two can go back and forth up to six times with nothing from you before Tom
-is made to come back to you. Jerry can be working while you keep talking to Tom (his answer waits
-its turn to be read), and you can talk to Jerry yourself: "Jerry, …". Each hears what the other and
-you say, so neither is lost. The whole room is one chat in the AI library, with who said what to
-whom.
+are two of them in the room with you: **Tom**, the supervisor, who you talk to, and **Jerry**, the
+worker, with his own model (the same as Tom's unless you pick another, in AI Listen's window) and
+his own voice (the first of the other kind from Tom's, unless you pick one). You talk only to Tom;
+Jerry can't see or hear you, only what Tom sends him, and you hear them both.
+
+- **Jobs.** With Jerry on, Tom has no tools of his own but the jobs and his memory: anything that
+  takes a tool (the web, files, the library, scripts, sums) he hands Jerry as a job, with a spec:
+  the goal, constraints (from what he knows of you), what counts as done, and what to bring back.
+  You hear Tom brief it ("Jerry, job 3: …"); the spec is in the window. Jerry works it with the
+  skills, saying what he's doing as he goes in his own voice, and ends it with a result, read out in
+  his voice. Tom is told, checks the result against his spec, and sends it back with what to change
+  if it misses (up to three times, without asking you); if it's right, he says only what you still
+  need to know, or nothing. Jobs run one at a time, oldest first; one sent back, or unblocked, goes
+  first. When Jerry can't go on without an answer he asks Tom, who answers from what he knows, or
+  asks you. Jobs are kept across chats and launches (the **Jobs** list in AI Listen's window shows
+  each one's status, spec, result, tools and log; **Clear finished** forgets the ones that are over);
+  a job left running when the app stops is queued again next time.
+- **Approvals.** Jerry's tool calls that change something (library editing, scripts) wait for you:
+  a card in the window with **Approve** and **Reject**, and Tom's voice asks "yes or no?"; say
+  "yes", "go ahead", "no" or "reject". A rejected call comes back to Jerry as rejected, and he goes
+  on without it. **Approve** in the window's settings makes it everything (every tool, even looking
+  things up) or nothing.
+- **Tom watches.** Tom is told of everything that happens to a job (a tool proposed, approved,
+  rejected or run; a question; a result; a failure) and usually says nothing; he can correct Jerry
+  mid-job. **Tom watches every step** off tells him only of questions, results and failures, which
+  is quicker on a slow model.
+- **Memory.** Tom learns: after a job he notes what it taught him in his memory, in three sections
+  (your preferences, how to brief Jerry, what went wrong), which he reads at the start of every turn
+  and prunes himself (sixty notes at most). **Memory** in AI Listen's window (or right-click the
+  tile) opens it: read it, edit it, and give Tom and Jerry **standing instructions** of your own,
+  which go after their system prompts. Tom keeps his memory with Jerry off too. Jerry keeps nothing
+  between chats: each new chat starts him fresh.
+- The whole room is one chat in the AI library, with who said what to whom, and the jobs' lines.
+  "Stop" stops Tom and the voices; Jerry's job carries on.
 
 ### Skills
 

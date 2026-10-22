@@ -39,6 +39,7 @@ struct AssistantView: View {
             controls
             if let advice = ai.thinkingAdvice { ThinkingNotice(advice: advice) }
             transcript
+            if !ai.board.jobs.isEmpty { JobsSection() }
             typeBar
             settings
         }
@@ -84,6 +85,9 @@ struct AssistantView: View {
                 .buttonStyle(PillButton(tint: .secondary, filled: false))
                 .disabled(ai.turns.isEmpty)
                 .help("Start another chat (this one stays in the AI library; the new one doesn't see it unless you ask)")
+            Button { Windows.show(.memory) } label: { Label("Memory", systemImage: "brain.head.profile") }
+                .buttonStyle(PillButton(tint: .secondary, filled: false))
+                .help("What Tom has learned (his notes, which he reads every turn), and the standing instructions for Tom and Jerry")
         }
     }
 
@@ -124,6 +128,9 @@ struct AssistantView: View {
                     }
                     ForEach(Array(ai.turns.enumerated()), id: \.offset) { i, turn in
                         ChatBubble(turn: turn).id(i)
+                    }
+                    if let approval = ai.pendingApproval {
+                        ApprovalCard(approval: approval).id("approval")
                     }
                     if let working = ai.working {
                         HStack(spacing: 6) {
@@ -170,6 +177,9 @@ struct AssistantView: View {
             .onChange(of: ai.hearing) { _, h in
                 if !h.isEmpty { scroller.scrollTo("hearing", anchor: .bottom) }
             }
+            .onChange(of: ai.pendingApproval?.id) { _, id in
+                if id != nil { withAnimation { scroller.scrollTo("approval", anchor: .bottom) } }
+            }
         }
     }
 
@@ -181,7 +191,8 @@ struct AssistantView: View {
             HowToLine(symbol: "3.circle", text: "“Stop” stops it talking. “New chat” starts over. “Goodbye” turns it off, and so does \(AssistantModel.clock(ai.settings.idleSeconds)) with nothing said; you hear a sound as it does.")
             HowToLine(symbol: "books.vertical", text: "Each chat is kept in the AI library. A new chat starts fresh, but ask about an earlier one, or something in your library, and it looks it up; ask, and it adds notes or changes them.")
             HowToLine(symbol: "safari", text: "Its skills (on the panel, beside it) let it search the web and read pages in your browser, find and read files, read the clipboard, check the Mac, and do sums.")
-            HowToLine(symbol: "person.2", text: "With the \(Team.teammate) skill on, there are two of them: say “Tom, ask \(Team.teammate) to…” and the two talk it over out loud, each in their own voice; what one says reaches the other only once you've heard it, so cut in and it doesn't. Or talk to \(Team.teammate) yourself by name. \(Team.teammate) can be busy while you talk to Tom.")
+            HowToLine(symbol: "person.2", text: "With the \(Team.teammate) skill on, there are two of them: Tom, who you talk to, and \(Team.teammate), who does the work. Anything that takes a tool, Tom hands \(Team.teammate) as a job (you hear him brief it); \(Team.teammate) says what he's doing as he goes, in his own voice, and reports back; Tom checks the result against what he asked for and sends it back if it misses. \(Team.teammate)'s tool calls that change something wait for you: Approve or Reject, or say yes or no.")
+            HowToLine(symbol: "brain.head.profile", text: "Tom learns: after a job he notes what it taught him (your preferences, how to brief \(Team.teammate), what went wrong) in his memory, which he reads every turn. Open it with Memory: read it, edit it, and give Tom and \(Team.teammate) standing instructions.")
             HowToLine(symbol: "hand.wave", text: "With Listen on (the ear), a wave at the camera starts it too, and stops it talking. Soft sounds every few seconds say what it's working on.")
         }
         .padding(.bottom, 6)
@@ -265,6 +276,19 @@ struct AssistantView: View {
                      : AssistantModel.echo.failed ? "Echo cancellation gave the microphone only silence here, so it's off until the app starts again: only “stop”, “wait” or “Tom” said first cut in."
                      : "Say “stop”, “wait” or “Tom”, or just talk, to cut in.")
                     .font(.system(size: 11)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Text("Approve").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+                    ForEach(Approvals.allCases, id: \.self) { a in
+                        Button(a.title) { ai.change { $0.approvals = a } }
+                            .buttonStyle(Chip(selected: ai.settings.approvals == a, tint: Palette.teal))
+                            .help(a.help)
+                    }
+                    Text("of \(Team.teammate)'s tool calls wait for you").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Spacer()
+                    Toggle("Tom watches every step", isOn: Binding(get: { ai.settings.tomWatches }, set: { v in ai.change { $0.tomWatches = v } }))
+                        .toggleStyle(.checkbox).font(.system(size: 11))
+                        .help("Tom is told of every tool \(Team.teammate) proposes and runs (he usually says nothing); off, only of his questions, results and failures (quicker)")
+                }
                 Divider().padding(.vertical, 2)
                 HStack(spacing: 8) {
                     Text(Team.teammate).font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
@@ -382,7 +406,14 @@ struct AssistantView: View {
         case "calculate": return "the calculator"
         case "show_app": return "opening a window"
         case "show_browser": return "showing the browser"
-        case "tell_jerry": return "talking to \(Team.teammate)"
+        case "delegate": return "a job for \(Team.teammate)"
+        case "message_jerry": return "a message to \(Team.teammate)"
+        case "cancel_job": return "cancelling a job"
+        case "job_status": return "a job's standing"
+        case "ask_tom": return "asking \(Assistant.name)"
+        case "finish": return "finishing a job"
+        case "remember": return "remembering"
+        case "forget": return "forgetting"
         default: return tool
         }
     }
@@ -448,9 +479,22 @@ struct ChatBubble: View {
     var turn: ChatTurn
 
     var body: some View {
+        if turn.role == .system {
+            HStack(spacing: 6) {
+                Image(systemName: "circle.fill").font(.system(size: 5)).foregroundStyle(.tertiary)
+                Text(turn.text).font(.system(size: 11)).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(Self.time.string(from: turn.time)).font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 6)
+        } else {
+            bubble
+        }
+    }
+
+    private var bubble: some View {
         let user = turn.role == .user
         let jerry = turn.name == Team.teammate
-        HStack {
+        return HStack {
             if user { Spacer(minLength: 60) }
             VStack(alignment: user ? .trailing : .leading, spacing: 3) {
                 Text(turn.text)
@@ -759,6 +803,242 @@ private struct ChatDetail: View {
         .padding(.horizontal, 18)
         .padding(.top, 34)
         .padding(.bottom, 18)
+    }
+
+    private func flash(_ s: String) {
+        note = s
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { if note == s { note = nil } }
+    }
+}
+
+/// A tool Jerry proposed, waiting for the user: approve it or reject it.
+private struct ApprovalCard: View {
+    @ObservedObject var ai = AssistantModel.shared
+    var approval: AssistantModel.Approval
+
+    var body: some View {
+        let use = ToolUse(name: approval.call.name, arguments: approval.call.argumentsJSON, result: "")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "hand.raised.fill").foregroundStyle(Palette.orange)
+                Text("\(Team.teammate) wants to use \(AssistantView.toolName(approval.call.name)) (\(approval.job))").font(.system(size: 13, weight: .semibold))
+            }
+            if !use.summary.isEmpty {
+                Text(use.summary).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                Button("Approve") { ai.decide(approval, true) }
+                    .buttonStyle(PillButton(tint: Palette.green, filled: true))
+                    .keyboardShortcut(.return, modifiers: [])
+                Button("Reject") { ai.decide(approval, false) }
+                    .buttonStyle(PillButton(tint: Palette.red, filled: false))
+                Text("or say “yes” or “no”").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Palette.orange.opacity(0.5)))
+    }
+}
+
+/// The jobs Tom has handed Jerry: each with its status, its spec, its result, and what tools ran.
+private struct JobsSection: View {
+    @ObservedObject var ai = AssistantModel.shared
+    @State private var open = false
+    @State private var expanded: Set<String> = []
+
+    var body: some View {
+        let jobs = ai.board.jobs.sorted { $0.number > $1.number }
+        let openCount = jobs.filter { $0.status.isOpen }.count
+        DisclosureGroup(isExpanded: $open) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(jobs) { job in
+                    JobRow(job: job, expanded: expanded.contains(job.id)) {
+                        if expanded.contains(job.id) { expanded.remove(job.id) } else { expanded.insert(job.id) }
+                    }
+                }
+                HStack {
+                    Spacer()
+                    Button("Clear finished") { ai.clearFinishedJobs() }
+                        .buttonStyle(PillButton(tint: .secondary, filled: false))
+                        .disabled(jobs.allSatisfy { $0.status.isOpen })
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "list.bullet.clipboard").foregroundStyle(Palette.teal)
+                Text("Jobs").font(.system(size: 12, weight: .semibold))
+                Text(openCount == 0 ? "\(jobs.count) done" : "\(openCount) open").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct JobRow: View {
+    var job: Job
+    var expanded: Bool
+    var toggle: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: toggle) {
+                HStack(spacing: 8) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 10)).foregroundStyle(.tertiary)
+                    Text(job.id + (job.revisions > 0 ? " · revision \(job.revisions)" : "")).font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    Text(job.status.title).font(.system(size: 11)).foregroundStyle(color)
+                    Text(job.spec.goal).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(job.spec.text).font(.system(size: 12)).textSelection(.enabled)
+                    if let q = job.blockedOn {
+                        Text("\(Team.teammate) asks: \(q)").font(.system(size: 12)).foregroundStyle(Palette.orange)
+                    }
+                    if let r = job.result {
+                        Text("Result: \(r.summary)").font(.system(size: 12, weight: .medium)).textSelection(.enabled)
+                        if !r.details.isEmpty { Text(r.details).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled) }
+                    }
+                    if !job.tools.isEmpty {
+                        Text("Tools (\(job.tools.count))").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                        ForEach(job.tools) { use in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(AssistantView.toolName(use.name) + (use.summary.isEmpty ? "" : ": " + use.summary))
+                                    .font(.system(size: 11, design: .monospaced))
+                                Text(String(use.result.prefix(300)) + (use.result.count > 300 ? "…" : "")).font(.system(size: 11)).foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                    Text("Log").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    ForEach(job.events) { e in
+                        Text(ChatBubble.time.string(from: e.time) + "  " + JobBoard.line(e)).font(.system(size: 11)).foregroundStyle(.tertiary)
+                    }
+                }
+                .padding(.leading, 18)
+            }
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var color: Color {
+        switch job.status {
+        case .queued: return .secondary
+        case .running: return Palette.teal
+        case .awaitingApproval, .blocked: return Palette.orange
+        case .done: return Palette.green
+        case .failed: return Palette.red
+        }
+    }
+}
+
+/// Tom's memory: his notes by section (one a line, his to write and yours to edit), and the
+/// standing instructions for Tom and Jerry.
+struct MemoryView: View {
+    @EnvironmentObject var service: Service
+    @ObservedObject var ai = AssistantModel.shared
+    @State private var notes: [String: String] = [:]
+    @State private var tom = ""
+    @State private var jerry = ""
+    @State private var note: String?
+
+    var body: some View {
+        Page(title: "Tom's Memory", subtitle: "What Tom has learned, read at the start of every turn; edit it, he keeps it",
+             symbol: "brain.head.profile", colors: [Palette.violet, Palette.teal]) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(ai.memory.sections) { section in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(section.title).font(.system(size: 13, weight: .semibold))
+                                Text(section.id).font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary)
+                                Spacer()
+                                Text(counted(lines(notes[section.id] ?? "").count, "note")).font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                            Text(section.about).font(.system(size: 11)).foregroundStyle(.secondary)
+                            editor(Binding(get: { notes[section.id] ?? "" }, set: { notes[section.id] = $0 }), height: 90)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Standing instructions for Tom").font(.system(size: 13, weight: .semibold))
+                        Text("Your own words, after his system prompt: how to talk to you, what to always do or never do.").font(.system(size: 11)).foregroundStyle(.secondary)
+                        editor($tom, height: 70)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Standing instructions for \(Team.teammate)").font(.system(size: 13, weight: .semibold))
+                        Text("After his system prompt: how to work, what to check, what to leave alone.").font(.system(size: 11)).foregroundStyle(.secondary)
+                        editor($jerry, height: 70)
+                    }
+                }
+                .padding(2)
+            }
+            HStack(spacing: 8) {
+                Button("Save") { save() }
+                    .buttonStyle(PillButton(tint: Palette.violet, filled: true))
+                    .keyboardShortcut("s", modifiers: .command)
+                    .disabled(!changed)
+                Button("Revert") { load() }
+                    .buttonStyle(PillButton(tint: .secondary, filled: false))
+                    .disabled(!changed)
+                Button("Copy") {
+                    service.copy(ai.memory.text)
+                    flash("Copied")
+                }
+                .buttonStyle(PillButton(tint: .secondary, filled: false))
+                Spacer()
+                if let note { Text(note).font(.system(size: 11)).foregroundStyle(.secondary) }
+                Text("\(ai.memory.noteCount) of \(Memory.maxNotes) notes").font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+            }
+        }
+        .onAppear(perform: load)
+        .onChange(of: ai.memory) { _, _ in if !changed { load() } }
+    }
+
+    private func editor(_ text: Binding<String>, height: CGFloat) -> some View {
+        TextEditor(text: text)
+            .font(.system(size: 12))
+            .scrollContentBackground(.hidden)
+            .padding(6)
+            .frame(minHeight: height)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func lines(_ s: String) -> [String] {
+        s.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: #"^[-•*]\s*"#, with: "", options: .regularExpression) }
+            .filter { !$0.isEmpty }
+    }
+
+    private var edited: Memory {
+        var m = ai.memory
+        for i in m.sections.indices { m.sections[i].notes = lines(notes[m.sections[i].id] ?? "") }
+        m.tomInstructions = tom.trimmingCharacters(in: .whitespacesAndNewlines)
+        m.jerryInstructions = jerry.trimmingCharacters(in: .whitespacesAndNewlines)
+        return m
+    }
+
+    private var changed: Bool { edited != ai.memory }
+
+    private func load() {
+        notes = Dictionary(uniqueKeysWithValues: ai.memory.sections.map { ($0.id, $0.notes.joined(separator: "\n")) })
+        tom = ai.memory.tomInstructions
+        jerry = ai.memory.jerryInstructions
+    }
+
+    private func save() {
+        let m = edited
+        guard m.noteCount <= Memory.maxNotes else {
+            flash("At most \(Memory.maxNotes) notes in all")
+            return
+        }
+        ai.setMemory(m)
+        load()
+        flash("Saved")
     }
 
     private func flash(_ s: String) {
