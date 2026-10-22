@@ -250,7 +250,7 @@ struct AssistantView: View {
                 }
                 HStack(spacing: 8) {
                     Text("Barge in").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
-                    Toggle("Talk over an answer to stop it (off: it doesn't listen while it talks)",
+                    Toggle("Talk over an answer to stop it. Off unless you turn it on: it doesn't listen while it talks, so nothing you say then is taken for its own voice and thrown away.",
                            isOn: Binding(get: { ai.settings.bargeIn }, set: { v in ai.change { $0.bargeIn = v } }))
                         .toggleStyle(.checkbox).font(.system(size: 11))
                 }
@@ -260,7 +260,8 @@ struct AssistantView: View {
                            isOn: Binding(get: { ai.settings.echoCancel }, set: { v in ai.change { $0.echoCancel = v } }))
                         .toggleStyle(.checkbox).font(.system(size: 11))
                 }
-                Text(!ai.settings.echoCancel ? "Echo cancellation is off: only “stop”, “wait” or “Tom” said first cut in. Headphones help."
+                Text(!ai.settings.bargeIn ? "Barge in is off: it doesn't listen while it talks. Stop talking (the button, or a wave) and then talk."
+                     : !ai.settings.echoCancel ? "Echo cancellation is off: only “stop”, “wait” or “Tom” said first cut in; anything else said while it talks is dropped. Headphones help."
                      : AssistantModel.echo.failed ? "Echo cancellation gave the microphone only silence here, so it's off until the app starts again: only “stop”, “wait” or “Tom” said first cut in."
                      : "Say “stop”, “wait” or “Tom”, or just talk, to cut in.")
                     .font(.system(size: 11)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
