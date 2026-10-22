@@ -209,6 +209,8 @@ final class AssistantModel: ObservableObject {
         runner = Self.runner(for: loaded)
         let board = SkillsModel.shared
         skills = SkillRunner(host: MacSkills.shared, sites: board.sites, searchTemplate: board.searchTemplate)
+        listener.name = "AI Listen"
+        wakeListener.name = "Always listen"
         listener.onUtterance = { [weak self] said in self?.heard(said) }
         wakeListener.onUtterance = { [weak self] said in self?.wakeHeard(said) }
         // Each phrase heard while a voice plays is checked against the voices' prints: theirs is
@@ -408,12 +410,16 @@ final class AssistantModel: ObservableObject {
     }
 
     func heard(_ utterance: String) {
-        NSLog("AI Listen heard: %@ (speaking: %d)", utterance, voice.speaking ? 1 : 0)
+        NSLog("AI Listen heard: %@ (on: %d, mic busy: %d, speaking: %d, echo cancelled: %d)", utterance, on ? 1 : 0,
+              micBusy ? 1 : 0, voice.speaking ? 1 : 0, Self.echo.cancelsEcho ? 1 : 0)
         guard on, !micBusy else { return }
         var said = utterance
         if settings.bargeIn, voice.speaking || Date() < echoUntil {
             // While it reads (or just after), what's heard may be the answer coming back.
-            guard let mine = Echo.interruption(utterance, reading: reading, cancelled: Self.echo.cancelsEcho) else { return }
+            guard let mine = Echo.interruption(utterance, reading: reading, cancelled: Self.echo.cancelsEcho) else {
+                NSLog("AI Listen took that for its own voice coming back (reading: %@)", reading)
+                return
+            }
             if voice.speaking { stopTalking() }
             said = mine
         }

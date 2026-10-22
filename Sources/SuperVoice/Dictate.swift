@@ -28,6 +28,8 @@ final class Recorder: ObservableObject {
 
     /// The engine shared with a voice, echo cancelled (AI Listen's), or nil: its own.
     let echo: EchoCancel?
+    /// Who's listening, for the log: "Dictate", "AI Listen", "Always listen".
+    var name = "Dictate"
 
     init(pauseToEnd: Double? = nil, holdIfUnfinished: Double? = nil, shared: EchoCancel? = nil) {
         self.pauseToEnd = pauseToEnd
@@ -190,9 +192,17 @@ final class Recorder: ObservableObject {
     /// On the audio thread.
     private func heard(_ buffer: AVAudioPCMBuffer) {
         lock.lock()
+        if let was = resampler?.inputFormat, was != buffer.format {
+            // The microphone's format changed under the running engine (voice processing starting
+            // up does that, and `rewire` leaves the engine be then): what comes now is converted
+            // from what it really is, else every buffer would be dropped and nothing ever heard.
+            NSLog("%@: the microphone now gives %@ (it was %@)", name, buffer.format, was)
+            resampler = Resampler(from: buffer.format)
+        }
         let samples = resampler?.convert(buffer) ?? []
         lock.unlock()
-        let l = Self.level(buffer)
+        // The meter shows what the phrase cutter gets, so it can't move while nothing is heard.
+        let l = Self.level(samples)
         let live = Self.anySound(buffer)
         DispatchQueue.main.async {
             guard self.on else { return }
@@ -222,21 +232,30 @@ final class Recorder: ObservableObject {
         writing = true
         let mine = generation
         let screen = self.screen
+        let who = name
         Task.detached { [weak self] in
             var said = ""
             var problem: String?
+            var dropped = false
             // A quiet microphone (voice processing's is) is turned up to what the models expect.
             let audio = PCM.lifted(item.samples)
             do {
                 // One of the voices talking, not the user: dropped unheard.
                 if let playing = item.playing, let screen, await screen(audio, playing) {
-                    said = ""
+                    dropped = true
                 } else {
                     said = try await Neural.shared.write(audio).text
                 }
             } catch {
                 problem = error.localizedDescription
             }
+            // Each phrase, as it's written down: how long and how loud it was (before it was turned
+            // up), and what came of it, so a microphone that's heard but not understood shows here.
+            let seconds = Double(item.samples.count) / Double(PCM.listenRate)
+            let peak = PCM.peak(item.samples[...])
+            let outcome = problem.map { "failed: \($0)" } ?? (dropped ? "dropped: one of the voices" : "written: \"\(said)\"")
+            NSLog("%@ phrase: %.1f s, peak %.4f, playing: %@, %@", who, seconds, peak,
+                  item.playing.map { $0 ? "yes" : "no" } ?? "-", outcome)
             let heard = said, failure = problem
             DispatchQueue.main.async { self?.written(heard, send: item.send, problem: failure, generation: mine) }
         }
@@ -339,14 +358,10 @@ final class Recorder: ObservableObject {
         return false
     }
 
-    /// Loudness of a buffer, 0 (quiet) to 1 (loud), on a decibel scale.
-    static func level(_ buffer: AVAudioPCMBuffer) -> Float {
-        guard let data = buffer.floatChannelData?[0] else { return 0 }
-        let n = Int(buffer.frameLength)
-        guard n > 0 else { return 0 }
-        var sum: Float = 0
-        for i in 0..<n { sum += data[i] * data[i] }
-        let db = 20 * log10(max(sqrt(sum / Float(n)), 1e-6))
+    /// Loudness of 16 kHz samples, 0 (quiet) to 1 (loud), on a decibel scale.
+    static func level(_ samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return 0 }
+        let db = 20 * log10(max(PhraseCutter.rms(samples[...]), 1e-6))
         return max(0, min(1, (db + 55) / 45))
     }
 
