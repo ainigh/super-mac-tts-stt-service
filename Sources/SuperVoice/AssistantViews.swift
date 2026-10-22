@@ -256,7 +256,7 @@ struct AssistantView: View {
                 }
                 HStack(spacing: 8) {
                     Text("Echo").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
-                    Toggle("Echo cancellation: its own voice is taken out of what the microphone hears (turn off if it stops hearing you; from the next start)",
+                    Toggle("Echo cancellation (Apple's voice processing): its own voice is taken out of what the microphone hears. Off unless you turn it on: on some Macs its microphone is heard but not understood. From the next start.",
                            isOn: Binding(get: { ai.settings.echoCancel }, set: { v in ai.change { $0.echoCancel = v } }))
                         .toggleStyle(.checkbox).font(.system(size: 11))
                 }
