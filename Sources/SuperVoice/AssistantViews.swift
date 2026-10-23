@@ -191,7 +191,7 @@ struct AssistantView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("How it works").font(.system(size: 13, weight: .semibold))
             HowToLine(symbol: "1.circle", text: "Press Start (or ⌘L), or click the panel's AI listen tile. With Listen on (the ear), just say “\(Assistant.name)”: “Tom, what's a good name for a cat?”")
-            HowToLine(symbol: "2.circle", text: "Then just talk: everything you say goes to Ollama, and the answer is read back. A pause mid-sentence doesn't cut you off, and you can talk over an answer to stop it.")
+            HowToLine(symbol: "2.circle", text: "Then just talk: everything you say goes to Ollama, and the answer is read back. A pause mid-sentence doesn't cut you off\(ai.settings.bargeIn ? ", and you can talk over an answer to stop it" : "").")
             HowToLine(symbol: "3.circle", text: "“Stop” stops it talking. “New chat” starts over. “Goodbye” turns it off, and so does \(AssistantModel.clock(ai.settings.idleSeconds)) with nothing said; you hear a sound as it does.")
             HowToLine(symbol: "books.vertical", text: "Each chat is kept in the AI library. A new chat starts fresh, but ask about an earlier one, or something in your library, and it looks it up; ask, and it adds notes or changes them.")
             HowToLine(symbol: "safari", text: "Its skills (on the panel, beside it) let it search the web and read pages in your browser, find and read files, read the clipboard, check the Mac, and do sums.")
@@ -1050,7 +1050,9 @@ struct MemoryView: View {
             }
         }
         .onAppear(perform: load)
-        .onChange(of: ai.memory) { _, _ in if !changed { load() } }
+        // Tom remembered something: shown, unless the user has changes of their own (judged against
+        // what was there before, since ai.memory is already the new one).
+        .onChange(of: ai.memory) { old, _ in if withEdits(old) == old { load() } }
     }
 
     private func editor(_ text: Binding<String>, height: CGFloat) -> some View {
@@ -1067,8 +1069,11 @@ struct MemoryView: View {
             .filter { !$0.isEmpty }
     }
 
-    private var edited: Memory {
-        var m = ai.memory
+    private var edited: Memory { withEdits(ai.memory) }
+
+    /// `base` with what's in the editors.
+    private func withEdits(_ base: Memory) -> Memory {
+        var m = base
         for i in m.sections.indices { m.sections[i].notes = lines(notes[m.sections[i].id] ?? "") }
         m.tomInstructions = tom.trimmingCharacters(in: .whitespacesAndNewlines)
         m.jerryInstructions = jerry.trimmingCharacters(in: .whitespacesAndNewlines)

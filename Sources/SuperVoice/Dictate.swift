@@ -97,6 +97,18 @@ final class Recorder: ObservableObject {
         }
     }
 
+    /// "Try again" after the model failed: what's waiting is written down again, and listening
+    /// carries on only if it hadn't been stopped.
+    func retry() {
+        if on {
+            start()
+        } else if !waiting.isEmpty {
+            problem = nil
+            finishing = true
+            writeNext()
+        }
+    }
+
     /// Stops listening. What was said last is still written down (`finishing` meanwhile).
     func stop() {
         wanted = false
@@ -111,6 +123,14 @@ final class Recorder: ObservableObject {
             if !writing && waiting.isEmpty { sendDone() }
         }
         finishing = writing || !waiting.isEmpty
+        writeNext()                                 // a phrase the model failed on is tried again
+    }
+
+    /// Forgets what's been written down, keeping the phrases the model failed on (for "Try again").
+    func took() {
+        done = ""
+        guess = ""
+        text = ""
     }
 
     /// Forgets what's been written down (and anything waiting).
@@ -283,6 +303,7 @@ final class Recorder: ObservableObject {
             return
         }
         if !waiting.isEmpty { waiting.removeFirst() }
+        if self.problem?.hasPrefix("Couldn't write it down") == true { self.problem = nil }     // it can now
         done = Self.join(done, said.trimmingCharacters(in: .whitespacesAndNewlines))
         if waiting.isEmpty { guess = "" }
         text = Self.join(done, guess)
@@ -407,7 +428,7 @@ struct DictateView: View {
                             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
                         }
                     } else if problem.contains("write it down") {
-                        Button("Try again") { recorder.start() }
+                        Button("Try again") { recorder.retry() }
                     }
                 }
             }
@@ -498,18 +519,18 @@ struct DictateView: View {
         }
     }
 
-    /// Recording adds to what's in the box.
+    /// Recording adds to what's in the box (phrases the model failed on are written down first).
     private func startRecording() {
-        recorder.clear()
+        if recorder.problem == nil { recorder.clear() } else { recorder.took() }
         recorder.start()
     }
 
-    /// What was dictated joins the draft.
+    /// What was dictated joins the draft; phrases the model failed on wait for "Try again".
     private func take() {
         let said = recorder.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !said.isEmpty else { return }
         draft = Recorder.join(draft.trimmingCharacters(in: .whitespacesAndNewlines), said)
-        recorder.clear()
+        if recorder.problem == nil { recorder.clear() } else { recorder.took() }
     }
 
     private func keep() {

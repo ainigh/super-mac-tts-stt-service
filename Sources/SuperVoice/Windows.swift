@@ -196,6 +196,8 @@ struct VoiceBar: View {
         HStack(alignment: .top, spacing: 16) {
             VoicePicker(selected: service.settings.voice) { v in
                 service.change { $0.voice = v.id }
+                // Heard, as the pill says (not over what's being read aloud).
+                if !service.reader.speaking { SpeechPlayer.preview(v, speed: service.settings.speed) }
             }
             .fixedSize()
             Spacer()

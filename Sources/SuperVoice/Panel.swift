@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import VoiceCore
 
-/// What drops down from the menu bar icon: whether it's serving, the tools, the voice, each
-/// endpoint's switch, and the bottom bar.
+/// What drops down from the menu bar icon: whether it's serving across the top, then two columns
+/// (the tools and the models; the voice, each endpoint's switch and sharing), and the bottom bar.
 struct PanelView: View {
     @EnvironmentObject var service: Service
     @ObservedObject var board = SkillsModel.shared
@@ -14,20 +14,34 @@ struct PanelView: View {
     /// What was just copied ("url", "docs", "token"), shown as a check for a moment.
     @State private var copied: String?
 
+    /// Each of the two columns' width, and the space between them.
+    static let columnWidth: CGFloat = 340
+    static let gap: CGFloat = 20
+    /// The whole panel's width: both columns, the gap, and the padding around them.
+    static let width = 2 * columnWidth + gap + 2 * 16
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
-            tools
-            models
-            voices
-            Divider().opacity(0.5)
-            endpoints
-            sharing
+            HStack(alignment: .top, spacing: Self.gap) {
+                VStack(alignment: .leading, spacing: 14) {
+                    tools
+                    models
+                }
+                .frame(width: Self.columnWidth, alignment: .topLeading)
+                VStack(alignment: .leading, spacing: 14) {
+                    voices
+                    Divider().opacity(0.5)
+                    endpoints
+                    sharing
+                }
+                .frame(width: Self.columnWidth, alignment: .topLeading)
+            }
             Divider().opacity(0.5)
             footer
         }
         .padding(16)
-        .frame(width: 380)
+        .frame(width: Self.width)
     }
 
     // MARK: Header
@@ -466,8 +480,9 @@ struct PillButton: ButtonStyle {
     }
 }
 
-/// Everything the panel holds: the first column, and the skills' columns beside it when they're
-/// wanted (AI Listen on, or pinned). Reports its size, so the panel fits it as columns come and go.
+/// Everything the panel holds: the main panel, and the skills' columns beside it when they're
+/// wanted (AI Listen on, or pinned), scrolling sideways when the screen hasn't room for them all.
+/// Reports its size, so the panel fits it as columns come and go.
 struct PanelRoot: View {
     @ObservedObject var board = SkillsModel.shared
     @ObservedObject var assistant = AssistantModel.shared
@@ -478,6 +493,17 @@ struct PanelRoot: View {
 
     static let boardWidth: CGFloat = 380
 
+    /// The skills' columns side by side, with the lines between them.
+    private var columnsWidth: CGFloat {
+        board.showsDetail ? 3 * Self.boardWidth + 2 : 2 * Self.boardWidth + 1
+    }
+
+    /// How wide the skills' columns can be: what's left of the screen beside the main panel (at
+    /// least one column's worth).
+    private var room: CGFloat {
+        max(Self.boardWidth, Main.delegate.screenWidth - PanelView.width - 1 - 16)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             PanelView(close: close)
@@ -486,13 +512,25 @@ struct PanelRoot: View {
                 })
             if board.showsColumns {
                 Divider()
-                SkillsColumn().frame(width: Self.boardWidth, height: height)
-                Divider()
-                ActivityColumn().frame(width: Self.boardWidth, height: height)
-                if board.showsDetail {
-                    Divider()
-                    UseDetailColumn().frame(width: Self.boardWidth, height: height)
+                ScrollViewReader { scroller in
+                    ScrollView(.horizontal) {
+                        HStack(alignment: .top, spacing: 0) {
+                            SkillsColumn().frame(width: Self.boardWidth, height: height)
+                            Divider()
+                            ActivityColumn().frame(width: Self.boardWidth, height: height)
+                            if board.showsDetail {
+                                Divider()
+                                UseDetailColumn().frame(width: Self.boardWidth, height: height).id("detail")
+                            }
+                        }
+                    }
+                    // Something opened in full comes into view, even when the columns scroll.
+                    .onChange(of: board.opened?.id) { _, opened in
+                        guard opened != nil else { return }
+                        DispatchQueue.main.async { withAnimation { scroller.scrollTo("detail", anchor: .trailing) } }
+                    }
                 }
+                .frame(width: min(columnsWidth, room), height: height)
             }
         }
         .fixedSize()

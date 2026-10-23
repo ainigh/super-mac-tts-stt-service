@@ -201,9 +201,7 @@ final class SpeechPlayer: ObservableObject {
                 guard let self, mine == self.epoch else { return }
                 switch result {
                 case .success(let audio): self.play(item.line, audio)
-                case .failure(let error):
-                    self.problem = "Couldn't speak: \(error.localizedDescription)"
-                    self.stop()
+                case .failure(let error): self.failed("Couldn't speak: \(error.localizedDescription)")
                 }
             }
         }
@@ -234,8 +232,7 @@ final class SpeechPlayer: ObservableObject {
                     try engine.start()
                 }
             } catch {
-                problem = "Couldn't play: \(error.localizedDescription)"
-                stop()
+                failed("Couldn't play: \(error.localizedDescription)")
                 return
             }
         }
@@ -269,6 +266,16 @@ final class SpeechPlayer: ObservableObject {
         guard busy, !paused, lineLength > 0 else { return }
         let elapsed = Date().timeIntervalSince(lineStarted) - pausedFor
         word = SpokenText.wordRange(in: current, at: elapsed / lineLength)
+    }
+
+    /// It can't be said: everything's dropped, but those waiting on it are told it's over, as when
+    /// it finishes (else they'd wait for ever: AI Listen standing down, what was held till it's quiet).
+    private func failed(_ why: String) {
+        let waiting = Array(itemDone.values)
+        stop()
+        problem = why
+        waiting.forEach { $0() }
+        onDone?()
     }
 
     private func finished() {

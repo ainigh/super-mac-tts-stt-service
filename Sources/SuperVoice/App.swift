@@ -121,6 +121,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if Date().timeIntervalSince(lastActivity) >= Self.idleClose { hide() }
     }
 
+    /// The width of the screen the menu bar icon is on (what the panel has to fit in).
+    var screenWidth: CGFloat {
+        (item?.button?.window?.screen ?? NSScreen.main)?.visibleFrame.width ?? 1440
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         Service.shared.stopServingForQuit()
     }
@@ -142,7 +147,7 @@ final class MenuPanel: NSPanel {
 
     init<V: View>(content: V) {
         hosting = NSHostingView(rootView: AnyView(content.environmentObject(Service.shared)))
-        super.init(contentRect: NSRect(x: 0, y: 0, width: 380, height: 600),
+        super.init(contentRect: NSRect(x: 0, y: 0, width: PanelView.width, height: 600),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isFloatingPanel = true
         level = .popUpMenu
@@ -196,7 +201,7 @@ final class MenuPanel: NSPanel {
     func fit(_ size: CGSize) {
         guard size.width > 0, size.height > 0, anchor != .zero else { return }
         let screen = NSScreen.screens.first { $0.frame.contains(anchor.origin) }?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        var x = anchor.midX - 190                    // the first column (380 wide) centred under the icon
+        var x = anchor.midX - PanelView.width / 2    // the main panel centred under the icon
         x = min(max(x, screen.minX + 8), screen.maxX - size.width - 8)
         let top = anchor.minY - 6
         let y = max(screen.minY + 8, top - size.height)
