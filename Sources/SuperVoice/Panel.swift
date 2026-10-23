@@ -156,6 +156,10 @@ struct PanelView: View {
             if board.isOn(Skills.team) {
                 modelRow(Team.teammate, selection: Binding(get: { assistant.settings.jerryModel }, set: { m in assistant.change { $0.jerryModel = m } }),
                          shown: assistant.jerryModelName, same: "Same as \(Assistant.name)")
+                if assistant.settings.reviewer {
+                    modelRow(Team.reviewer, selection: Binding(get: { assistant.settings.janeModel }, set: { m in assistant.change { $0.janeModel = m } }),
+                             shown: assistant.janeModelName, same: "Same as \(Team.teammate)")
+                }
             }
         }
         .onAppear { if assistant.models.isEmpty { assistant.refreshModels() } }

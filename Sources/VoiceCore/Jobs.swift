@@ -75,6 +75,8 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
             case toolProposed = "tool_proposed", toolApproved = "tool_approved", toolRejected = "tool_rejected", toolResult = "tool_result"
             /// Jerry finished (`text`: the summary).
             case result
+            /// Jane, the reviewer, told Jerry what to do differently (`text`: her words).
+            case advice
         }
 
         public var id: UUID
@@ -100,6 +102,8 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
     /// The chat (the AI library record) it was asked in.
     public var session: UUID
     public var spec: Spec
+    /// What the user said just before Tom delegated it (the one thing of the user's the reviewer sees).
+    public var asked: String?
     public var status: Status
     /// Jerry's question, while it's blocked.
     public var blockedOn: String?
@@ -178,8 +182,9 @@ public struct JobBoard: Codable, Equatable, Sendable {
 
     /// A new job, queued.
     @discardableResult
-    public mutating func delegate(_ spec: Job.Spec, session: UUID, now: Date = Date()) -> Job {
+    public mutating func delegate(_ spec: Job.Spec, session: UUID, asked: String? = nil, now: Date = Date()) -> Job {
         var job = Job(id: "j\(nextNumber)", session: session, spec: spec, created: now)
+        job.asked = asked
         nextNumber += 1
         job.events.append(Job.Event(kind: .status, text: "queued", time: now))
         jobs.append(job)
@@ -318,6 +323,30 @@ public struct JobBoard: Codable, Equatable, Sendable {
         return jobs[i]
     }
 
+    /// Jane reviewed the job that came back: her instruction goes to Jerry with it.
+    public mutating func advise(_ id: String, _ text: String, now: Date = Date()) {
+        guard let i = index(id) else { return }
+        jobs[i].inbox.append("\(Team.reviewer), the reviewer, says: \(text)")
+        jobs[i].events.append(Job.Event(kind: .advice, text: text, time: now))
+        jobs[i].modified = now
+    }
+
+    /// The job as the reviewer sees it: the user's words just before, the spec, and everything
+    /// between Tom and Jerry on it (his words, his questions, the tools by name, his results, Tom's
+    /// messages); nothing else of the chat.
+    public static func review(_ job: Job) -> String {
+        var lines = ["Job \(job.id), sent back by Tom (revision \(job.revisions))."]
+        if let asked = job.asked { lines.append("What the user said just before Tom delegated it: \(asked)") }
+        lines.append("Tom's spec:\n" + job.spec.text)
+        lines.append("What happened, in order:")
+        for e in job.events where e.kind != .status || e.text.hasPrefix("sent back") {
+            lines.append("- " + line(e))
+        }
+        if !job.inbox.isEmpty { lines.append("Tom's message sending it back: " + job.inbox.joined(separator: " ")) }
+        lines.append("Tell \(Team.teammate) what to do differently.")
+        return lines.joined(separator: "\n")
+    }
+
     /// Jerry took the job's inbox (Tom's messages) with him: emptied.
     public mutating func took(_ id: String) -> [String] {
         guard let i = index(id) else { return [] }
@@ -358,7 +387,7 @@ public struct JobBoard: Codable, Equatable, Sendable {
     public static func briefing(_ job: Job, messages: [String]) -> String {
         var lines = ["Job \(job.id) from Tom" + (job.revisions > 0 ? " (revision \(job.revisions): it came back; see his message)" : "") + ":"]
         lines.append(job.spec.text)
-        if !messages.isEmpty { lines.append("Tom says: " + messages.joined(separator: " ")) }
+        if !messages.isEmpty { lines.append("Messages for you (from Tom; and from \(Team.reviewer), the reviewer, when she stepped in: do as she says): " + messages.joined(separator: " ")) }
         if !job.tools.isEmpty, job.revisions > 0 || job.inbox.isEmpty {
             lines.append("What you did on it before: " + job.tools.map(\.name).joined(separator: ", ") + ".")
         }
@@ -379,6 +408,7 @@ public struct JobBoard: Codable, Equatable, Sendable {
         case .toolRejected: return "\(e.text) rejected by the user"
         case .toolResult: return "\(e.text) ran"
         case .result: return "result: \(e.text)"
+        case .advice: return "\(Team.reviewer): \(e.text)"
         }
     }
 

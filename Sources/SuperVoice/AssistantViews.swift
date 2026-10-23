@@ -105,13 +105,17 @@ struct AssistantView: View {
                 ProgressView().controlSize(.small)
                 Text("Thinking…")
             case .speaking:
-                Image(systemName: "speaker.wave.2.fill").foregroundStyle(ai.speaking == Team.teammate ? Palette.teal : Palette.violet)
+                Image(systemName: "speaker.wave.2.fill").foregroundStyle(ai.speaking == Team.teammate ? Palette.teal : ai.speaking == Team.reviewer ? Palette.orange : Palette.violet)
                     .symbolEffect(.variableColor.iterative, isActive: true)
                 Text("\(ai.speaking ?? Assistant.name) speaking…")
             }
             if ai.jerryThinking {
                 ProgressView().controlSize(.small).padding(.leading, 6)
                 Text("\(Team.teammate) working…").foregroundStyle(Palette.teal)
+            }
+            if ai.janeThinking {
+                ProgressView().controlSize(.small).padding(.leading, 6)
+                Text("\(Team.reviewer) reviewing…").foregroundStyle(Palette.orange)
             }
         }
         .font(.system(size: 13, weight: .medium))
@@ -192,6 +196,7 @@ struct AssistantView: View {
             HowToLine(symbol: "books.vertical", text: "Each chat is kept in the AI library. A new chat starts fresh, but ask about an earlier one, or something in your library, and it looks it up; ask, and it adds notes or changes them.")
             HowToLine(symbol: "safari", text: "Its skills (on the panel, beside it) let it search the web and read pages in your browser, find and read files, read the clipboard, check the Mac, and do sums.")
             HowToLine(symbol: "person.2", text: "With the \(Team.teammate) skill on, there are two of them: Tom, who you talk to, and \(Team.teammate), who does the work. Anything that takes a tool, Tom hands \(Team.teammate) as a job (you hear him brief it); \(Team.teammate) says what he's doing as he goes, in his own voice, and reports back; Tom checks the result against what he asked for and sends it back if it misses. \(Team.teammate)'s tool calls that change something wait for you: Approve or Reject, or say yes or no.")
+            HowToLine(symbol: "person.3", text: "When Tom sends a job back, \(Team.reviewer), the reviewer, steps in: she reads the job alone (what you said just before, Tom's spec, what passed between Tom and \(Team.teammate)), says what's wrong with how they went about it and what \(Team.teammate) should do differently, in her own voice, and leaves. You hear her; nobody talks to her. Tom owns every job until you have what you asked for, says where things stand, and the app won't stand down over work pending: with nothing said for a while it asks Tom whether anything is still owed, and says \"standing down\" before it turns off.")
             HowToLine(symbol: "brain.head.profile", text: "Tom learns: after a job he notes what it taught him (your preferences, how to brief \(Team.teammate), what went wrong) in his memory, which he reads every turn. Open it with Memory: read it, edit it, and give Tom and \(Team.teammate) standing instructions.")
             HowToLine(symbol: "hand.wave", text: "With Listen on (the ear), a wave at the camera starts it too, and stops it talking. Soft sounds every few seconds say what it's working on.")
         }
@@ -326,6 +331,39 @@ struct AssistantView: View {
                             }
                             Text("\(Team.teammate)'s voice (Tom's is the panel's). Unset, it's the first of the other kind from Tom's, so they're told apart.")
                                 .font(.system(size: 10)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    HStack(spacing: 8) {
+                        Text(Team.reviewer).font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+                        Toggle("\(Team.reviewer), the reviewer: when Tom sends a job back, she reads it (only the job: what you said just before, Tom's spec, and what passed between Tom and \(Team.teammate)) and tells \(Team.teammate) what to do differently, then leaves. You hear her; nobody talks to her.",
+                               isOn: Binding(get: { ai.settings.reviewer }, set: { v in ai.change { $0.reviewer = v } }))
+                            .toggleStyle(.checkbox).font(.system(size: 11))
+                    }
+                    if ai.settings.reviewer {
+                        HStack(spacing: 8) {
+                            Text("Model").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+                            if ai.models.isEmpty {
+                                Text("Her model: \(ai.janeModelName)").font(.system(size: 12)).foregroundStyle(.secondary)
+                            } else {
+                                Picker("", selection: Binding(get: { ai.settings.janeModel }, set: { m in ai.change { $0.janeModel = m } })) {
+                                    Text("Same as \(Team.teammate) (\(ai.jerryModelName))").tag("")
+                                    ForEach(ai.models, id: \.self) { Text($0).tag($0) }
+                                }
+                                .labelsHidden()
+                                .frame(maxWidth: 280)
+                                .help("\(Team.reviewer)'s model (\(Team.teammate)'s unless you pick another)")
+                            }
+                        }
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("Voice").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 4) {
+                                VoicePicker(selected: ai.janeVoice.id) { v in
+                                    ai.change { $0.janeVoice = v.id }
+                                    SpeechPlayer.preview(v, speed: service.settings.speed)
+                                }
+                                Text("\(Team.reviewer)'s voice. Unset, it's the first that's neither Tom's nor \(Team.teammate)'s.")
+                                    .font(.system(size: 10)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                 }
@@ -503,6 +541,7 @@ struct ChatBubble: View {
     private var bubble: some View {
         let user = turn.role == .user
         let jerry = turn.name == Team.teammate
+        let jane = turn.name == Team.reviewer
         return HStack {
             if user { Spacer(minLength: 60) }
             VStack(alignment: user ? .trailing : .leading, spacing: 3) {
@@ -512,14 +551,14 @@ struct ChatBubble: View {
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .foregroundStyle(user ? Color.white : Color.primary)
                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(user ? Palette.violet : (jerry ? Palette.teal.opacity(0.14) : Color.primary.opacity(0.07))))
+                        .fill(user ? Palette.violet : (jerry ? Palette.teal.opacity(0.14) : jane ? Palette.orange.opacity(0.14) : Color.primary.opacity(0.07))))
                     .overlay(alignment: .leading) {
                         if turn.to != nil, !user {
-                            RoundedRectangle(cornerRadius: 2).fill(jerry ? Palette.teal : Palette.violet).frame(width: 3).padding(.vertical, 6)
+                            RoundedRectangle(cornerRadius: 2).fill(jerry ? Palette.teal : jane ? Palette.orange : Palette.violet).frame(width: 3).padding(.vertical, 6)
                         }
                     }
                 Text(turn.speaker + (turn.to.map { " → \($0)" } ?? "") + " · " + Self.time.string(from: turn.time))
-                    .font(.system(size: 10)).foregroundStyle(jerry ? AnyShapeStyle(Palette.teal) : AnyShapeStyle(.tertiary))
+                    .font(.system(size: 10)).foregroundStyle(jerry ? AnyShapeStyle(Palette.teal) : jane ? AnyShapeStyle(Palette.orange) : AnyShapeStyle(.tertiary))
             }
             if !user { Spacer(minLength: 60) }
         }

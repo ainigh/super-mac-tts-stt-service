@@ -12,10 +12,12 @@ A menu bar app for the Mac that does speech, offline, and does it well:
   (or wave at the camera), then talk; the answer is read back. Wave, or press Stop talking, to stop it (or turn **Barge in** on and talk over it). It turns off
   after three minutes with nothing said, with a sound as it does. Soft sounds every few seconds say
   what it's working on.
-- **Tom and Jerry**: a second assistant, Jerry, with his own model and voice, who does the work.
-  Tom hands him jobs with a spec, you hear them both, Jerry's tool calls that change something wait
-  for your approval, and Tom checks each result and sends it back if it misses. Tom learns from each
-  job into a memory you can read and edit, which also holds your standing instructions for both.
+- **Tom, Jerry and Jane**: a second assistant, Jerry, with his own model and voice, who does the
+  work. Tom hands him jobs with a spec, you hear them both, Jerry's tool calls that change something
+  wait for your approval, and Tom checks each result and sends it back if it misses; then Jane, the
+  reviewer, reads the job and tells Jerry what to do differently. Tom learns from each job into a
+  memory you can read and edit, which also holds your standing instructions for both. The app says
+  "standing down" before it turns off, and not while work is pending.
 - **Skills**: what the model can use besides talking, each switched on or off beside the panel:
   your library (reading, and adding or changing notes when you ask), your default browser (search,
   open pages, read and find text on them), files, the clipboard, the Mac's status, a calculator, and
@@ -116,6 +118,23 @@ Jerry can't see or hear you, only what Tom sends him, and you hear them both.
   rejected or run; a question; a result; a failure) and usually says nothing; he can correct Jerry
   mid-job. **Tom watches every step** off tells him only of questions, results and failures, which
   is quicker on a slow model.
+- **Jane, the reviewer.** When Tom sends a job back, Jane steps in before Jerry takes it up again.
+  She sees only the job: what you said just before Tom delegated it, Tom's spec and messages, what
+  Jerry said as he worked, which tools he used, and what he brought back; nothing else of the chat,
+  and none of Tom's memory. Her stance is suspicion of how intelligent and systematic the two of
+  them are being: did Jerry read the spec, check against the done criteria, use the right tools in
+  the right order, assume what he should have looked up; is Tom's spec vague. She tells Jerry what
+  to do differently, step by step, in her own voice (you hear her; nobody talks to her), and leaves;
+  she does none of the work herself and has no tools. If the job comes back again, so does she. Her
+  model and voice are set in AI Listen's window (Jerry's, and the first voice that's neither Tom's
+  nor Jerry's, unless you pick others); **Jane** there turns her off.
+- **Status, and standing down.** Tom owns every job until you have what you asked for: he's told to
+  forget none, and to say where things stand when a job has been going a while (every minute or two
+  he's asked whether you've heard lately). With nothing said for the turn-off time, the app doesn't
+  simply turn off: over work pending (a job of this chat still open, one running or queued, a tool
+  waiting on you, Jane reviewing) it stays on and says so; otherwise it asks Tom whether anything is
+  still owed to you, and only on his word (or none, after another period) says **"standing down"**
+  in his voice and turns off. Cut in while it says so and it stays on.
 - **Memory.** Tom learns: after a job he notes what it taught him in his memory, in three sections
   (your preferences, how to brief Jerry, what went wrong), which he reads at the start of every turn
   and prunes himself (sixty notes at most). **Memory** in AI Listen's window (or right-click the

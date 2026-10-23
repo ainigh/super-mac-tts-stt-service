@@ -8,6 +8,8 @@ import Foundation
 public enum Team {
     /// The second assistant.
     public static let teammate = "Jerry"
+    /// The third: the reviewer, who steps in when a job comes back.
+    public static let reviewer = "Jane"
     /// His name as the recognizer tends to write it.
     public static let teammateWords: [[String]] = [["jerry"], ["gerry"], ["jeri"], ["jerri"], ["jerrie"]]
 
@@ -55,9 +57,14 @@ public enum Team {
         message_\(t) to send it back with what to change, without asking the user; if it's right, say what matters in \
         a sentence, and never repeat his report, which the user already heard read out), when it failed, when \
         \(teammate) asked something only the user can answer (answer from what you know first), or to correct course. \
-        The user hears \(teammate) too, and approves or rejects his tool calls themselves. After a job, remember what \
-        it taught you about the user or about briefing \(teammate). Never speak for \(teammate), never pretend to \
-        have asked him, never claim a result you weren't given, and never do yourself what you have no tool for.
+        The user hears \(teammate) too, and approves or rejects his tool calls themselves. When you send a job back, \
+        \(reviewer), the reviewer, steps in first: she reads the job and tells \(teammate) what to do differently \
+        (the user hears her; nobody talks to her). You own every job until the user has what they asked for: never \
+        forget an open one, never drop it quietly, and don't let the user wonder: when asked for status, or when a \
+        job has been going a while, say in a sentence where it stands (what's running, what's waiting on them, what's \
+        next). After a job, remember what it taught you about the user or about briefing \(teammate). Never speak \
+        for \(teammate), never pretend to have asked him, never claim a result you weren't given, and never do \
+        yourself what you have no tool for.
         """
     }
 
@@ -74,6 +81,40 @@ public enum Team {
         which comes back to you with it). Always end a job with finish: a summary in a sentence or two that says what \
         \(lead) needs to check it against the done criteria, and details for the user. Never make up a result.
         """
+    }
+
+    /// What Jane is told: she reviews one job that came back, and tells Jerry what to do differently.
+    public static func reviewerPrompt(me: String = Team.reviewer, lead: String = Assistant.name, worker: String = Team.teammate) -> String {
+        """
+        You are \(me), the reviewer. \(lead), the supervisor, handed \(worker), the worker, a job; \(worker)'s result \
+        didn't satisfy \(lead), who sent it back and escalated to you. You see only the job: what the user asked \
+        just before, \(lead)'s spec and messages, what \(worker) said as he worked, which tools he used, and what \
+        he brought back. Be suspicious of how intelligent and systematic the two of them are being: did \(worker) \
+        read the spec, or guess? Did he check his result against the done criteria before finishing, or stop too \
+        early? Did he use the right tools, in the right order, and read what they gave him? Did he assume what he \
+        should have looked up or asked? Is \(lead)'s spec itself vague, and what should \(worker) take it to mean? \
+        Then instruct \(worker): concretely, what to do differently this time, step by step, and what to check \
+        before he finishes. A short paragraph, plain words, no markdown: it's read out loud in your voice and the \
+        user hears it. You don't do the work yourself (you have no tools), you don't talk to the user, and you don't \
+        praise: find the flaw. Then you leave.
+        """
+    }
+
+    /// When nothing's been said for a while, what Tom is asked before the app stands down.
+    public static func idleQuestion(minutes: String, openJobs: String) -> String {
+        "Nothing from the user for \(minutes). Open jobs: \(openJobs). Is anything still owed to the user (a job not delivered, something you said you'd do, a question of theirs unanswered)? If so, answer with the word (hold) and then a sentence of status for them; else answer (nothing) and the app stands down."
+    }
+
+    /// Tom's answer says to hold on (work is pending): "(hold) The search is still running."
+    public static func isHold(_ answer: String) -> Bool {
+        answer.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            .range(of: #"^[\(\[]?\s*hold(ing)?(\s+on)?\s*[\)\]:,.]?"#, options: .regularExpression) != nil
+    }
+
+    /// Tom's answer without its "(hold)" marker: what's read to the user.
+    public static func withoutHold(_ answer: String) -> String {
+        answer.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"^[\(\[]?\s*hold(ing)?(\s+on)?\s*[\)\]:,.]?\s*"#, with: "", options: [.regularExpression, .caseInsensitive])
     }
 
     /// A message from a teammate, as the model gets it (not the user).

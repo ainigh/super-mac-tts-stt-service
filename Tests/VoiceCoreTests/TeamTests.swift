@@ -258,7 +258,7 @@ final class JobsTests: XCTestCase {
         XCTAssertTrue(r.result.contains("unblocked"))
         XCTAssertEqual(board.nextQueued()?.id, "j1")
         let brief = JobBoard.briefing(board.job("j1")!, messages: board.took("j1"))
-        XCTAssertTrue(brief.contains("Tom says: Deep Focus."))
+        XCTAssertTrue(brief.contains("Messages for you (from Tom; and from Jane, the reviewer, when she stepped in: do as she says): Deep Focus."))
         XCTAssertTrue(brief.hasPrefix("Job j1 from Tom:\nGoal: pick a playlist"))
     }
 
@@ -400,5 +400,43 @@ final class MemoryTests: XCTestCase {
         let again = MemoryStore(url: url)
         XCTAssertEqual(again.memory, m)
         XCTAssertEqual(again.memory.tomInstructions, "Call me Sam.")
+    }
+}
+
+/// Jane, the reviewer, and standing down.
+final class ReviewerTests: XCTestCase {
+    func testTheReviewerSeesOnlyTheJob() {
+        var board = JobBoard()
+        board.delegate(Job.Spec(goal: "focus music", doneCriteria: "playing at 40 or less"), session: UUID(), asked: "Put on something for focus.")
+        board.start("j1")
+        board.said("j1", "Searching.")
+        board.ran("j1", ToolUse(name: "web_search", arguments: #"{"query": "focus"}"#, result: "lots"))
+        board.finish("j1", Job.Result(summary: "Playing at 65."))
+        _ = board.message("j1", "Volume is 65; the spec says 40.")
+        let r = JobBoard.review(board.job("j1")!)
+        XCTAssertTrue(r.hasPrefix("Job j1, sent back by Tom (revision 1)."))
+        XCTAssertTrue(r.contains("What the user said just before Tom delegated it: Put on something for focus."))
+        XCTAssertTrue(r.contains("- Jerry: Searching."))
+        XCTAssertTrue(r.contains("- web_search ran"))
+        XCTAssertFalse(r.contains("lots"), "tool results stay in L3")
+        XCTAssertTrue(r.contains("- result: Playing at 65."))
+        XCTAssertTrue(r.contains("Tom's message sending it back: Volume is 65; the spec says 40."))
+        board.advise("j1", "Set the volume before you finish, and check it.")
+        let brief = JobBoard.briefing(board.job("j1")!, messages: board.took("j1"))
+        XCTAssertTrue(brief.contains("Jane, the reviewer, says: Set the volume before you finish, and check it."))
+        XCTAssertTrue(brief.contains("Volume is 65; the spec says 40."))
+        XCTAssertEqual(board.job("j1")?.events.last?.kind, .advice)
+        XCTAssertEqual(JobBoard.line(board.job("j1")!.events.last!), "Jane: Set the volume before you finish, and check it.")
+        XCTAssertTrue(Team.reviewerPrompt().hasPrefix("You are Jane, the reviewer."))
+    }
+
+    func testHoldingOn() {
+        XCTAssertTrue(Team.isHold("(hold) The search is still running."))
+        XCTAssertTrue(Team.isHold("Hold on: j3 is waiting on your approval."))
+        XCTAssertFalse(Team.isHold("(nothing)"))
+        XCTAssertFalse(Team.isHold("I'm holding the door."))
+        XCTAssertEqual(Team.withoutHold("(hold) The search is still running."), "The search is still running.")
+        XCTAssertEqual(Team.withoutHold("Hold on: j3 waits."), "j3 waits.")
+        XCTAssertTrue(Team.idleQuestion(minutes: "3 minutes", openJobs: "j3: Running").contains("(hold)"))
     }
 }
