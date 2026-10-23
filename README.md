@@ -38,7 +38,7 @@ listen; everything else works without it.
 
 Click the panel's **AI listen** tile and just talk: no wake word, and no window to open (the chat
 works all the same; it shows in the **AI library**, and right-click the tile for its window and
-settings). Or, with **Listen** on (the ear), say **"Tom"**, then talk: "Tom, what's a good name
+settings). Or, with **Listen** on (the ear), say **"Tom"** (he answers "Yes?"), then talk: "Tom, what's a good name
 for a cat?" starts it and asks. "Tom" is the only thing always listening acts on. From then on
 everything you say goes to Ollama and the answer is read back, until three minutes pass with
 nothing said (one to ten minutes, in its window), when it plays its off sound (always, sounds on or

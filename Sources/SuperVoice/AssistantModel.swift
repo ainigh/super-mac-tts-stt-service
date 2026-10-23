@@ -416,7 +416,8 @@ final class AssistantModel: ObservableObject {
 
     /// Starts talking (a new chat): just talk. `question`: asked right away. It doesn't open the
     /// window: it works all the same without it.
-    func start(question: String? = nil) {
+    /// `called`: the user said "Tom" (alone): it answers "Yes?" in his voice, so they know it heard.
+    func start(question: String? = nil, called: Bool = false) {
         if on {
             if let question { route(question) }
             return
@@ -432,10 +433,14 @@ final class AssistantModel: ObservableObject {
         enrollVoices()
         play("Pop")
         say(teamOn ? "Listening: just talk (Jerry's here too)" : "Listening: just talk")
+        if called { talk(Self.calledAnswer, as: tom) }
         if let question { route(question) }
         runJerry()
         followRequests()
     }
+
+    /// What Tom says when called by name with nothing after it.
+    static let calledAnswer = "Yes?"
 
     /// Stops, with its off sound first: the microphone closes and the voice stops. The chat stays
     /// in the AI library. Always listen carries on listening for "Tom".
@@ -517,7 +522,7 @@ final class AssistantModel: ObservableObject {
         NSLog("Always listen heard: %@ (on: %d, listen: %d, mic busy: %d)", utterance, on ? 1 : 0, alwaysListen ? 1 : 0, micBusy ? 1 : 0)
         guard !on, alwaysListen, !micBusy else { return }
         switch Assistant.hear(utterance, awake: false) {
-        case .wake, .command(.newChat): start()
+        case .wake, .command(.newChat): start(called: true)
         case .wakeThen(let question): start(question: question)
         default: break
         }
@@ -552,9 +557,11 @@ final class AssistantModel: ObservableObject {
         }
         switch Assistant.hear(said, awake: true) {
         case .wake:
+            // Called by name while on: it answers, so they know it's listening.
             activity()
             play("Pop")
             say("Listening")
+            talk(Self.calledAnswer, as: tom)
         case .wakeThen(let question), .speech(let question):
             activity()
             // A tool of Jerry's waiting on the user: "yes", "go ahead", "no" answer that.
