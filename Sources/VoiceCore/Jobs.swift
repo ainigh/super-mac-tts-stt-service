@@ -196,6 +196,18 @@ public struct JobBoard: Codable, Equatable, Sendable {
 
     public func job(_ id: String) -> Job? { jobs.first { $0.id == Self.normalize(id) } }
 
+    /// An open job with this goal already (the same words, give or take case and punctuation), so
+    /// it isn't delegated twice.
+    public func openJob(withGoal goal: String) -> Job? {
+        let key = Self.goalKey(goal)
+        guard !key.isEmpty else { return nil }
+        return open.first { Self.goalKey($0.spec.goal) == key }
+    }
+
+    static func goalKey(_ s: String) -> String {
+        Assistant.tokens(s).map(\.word).joined(separator: " ")
+    }
+
     /// "J17", "job 17", "17" → "j17".
     public static func normalize(_ id: String) -> String {
         let s = id.lowercased().trimmingCharacters(in: .whitespaces)
@@ -485,7 +497,7 @@ public struct JobBoard: Codable, Equatable, Sendable {
             lines.append("What you did on it before: " + job.tools.map(\.name).joined(separator: ", ") + ".")
         }
         if let r = job.result { lines.append("What you brought back before: \(r.summary)") }
-        lines.append("Work it with your tools, say briefly what you're doing as you go, and end with finish (or ask_tom if you can't go on without an answer).")
+        lines.append("Start now: answer with your first tool call (a short sentence, then the JSON). Work through the done criteria in order, check each against what the tools gave you, and end with finish (or ask_tom if you can't go on without an answer). Words without a tool call do nothing.")
         return lines.joined(separator: "\n")
     }
 
@@ -535,7 +547,7 @@ public enum JobTools {
     public static func supervisor(teammate: String = Team.teammate) -> [AssistantTools.Tool] {
         let t = teammate.lowercased()
         return [
-            AssistantTools.Tool(name: "delegate", description: "Hands \(teammate) a job. He has the tools (the web, files, the library, scripts, …); you don't, so anything that needs them is a job for him. Write the spec in full: he can't see or hear the user, only you. Returns the job's id. Calling it ends your turn: say first, in a few words, what you're handing off.",
+            AssistantTools.Tool(name: "delegate", description: "Hands \(teammate) a job. He has the tools (the web, files, the library, scripts, …); you don't, so anything that needs them is a job for him. Write the spec in full: he can't see or hear the user, only you. Returns the job's id. One job per call, one call per turn (it ends your turn): say first, in a few words, what you're handing off. Don't delegate what an open job already covers: message_\(t) it instead.",
                                 arguments: [("goal", "string: what to achieve, concretely"), ("constraints", "list of strings, optional: limits and preferences (from your memory too)"),
                                             ("done_criteria", "string: how to tell it's done; name every step that matters"), ("return", "string: what to bring back, enough to check done_criteria")]),
             AssistantTools.Tool(name: "job_status", description: "A job's standing: status, what \(teammate) asked (if blocked), recent events, and the result once it's done.",

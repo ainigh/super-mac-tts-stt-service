@@ -312,7 +312,16 @@ The user is the blocker. Switching would present approval prompts from two jobs 
 **Why rejection is a tool result, not an error.**
 Jerry needs to continue sensibly after a rejection. Returning it as a structured result ("rejected by user") lets him adapt in his normal loop rather than crashing the job.
 
-## 10. Open choices
+## 10. Keeping small models on track (as built)
+
+The prompts and the harness assume the models are small and drift:
+
+- Each role's prompt is a numbered list of what to do, with a worked example in its own tools (Tom: a `delegate` call, a `(nothing)` on an event, a relay and a send-back; Jerry: narrate + tool, then `finish`). The tool manual's example is the role's own tool, since models copy the shape they're shown.
+- Each of these is caught and the model is asked once, with a note from the Mac, for the right thing: Tom addressing Jerry in words (Jerry hears only tool calls); Tom claiming he can't; Jerry answering in words with no `finish`/`ask_tom`/tool; a tool call that didn't parse (cut off, single quotes); Jerry still calling tools past a job's round limit (asked to finish with what he has); two turn-ending calls in one answer (only the first is made); the same goal delegated while a job with it is open (not created). One nudge per turn each, so a model that doesn't take it can't be sent round in circles.
+- `message_jerry` on the job Jerry is working reaches him mid-job (an interjection before his next model call), not at the next pickup.
+- Jerry's chat is fresh for each job; the job record (spec, Tom's messages, Jane's advice, tools used, the last result) is pinned in the briefing. Every request asks for a 16k context so a page read doesn't push the system prompt and spec out.
+
+## 11. Open choices
 
 - **Tom chattiness.** With a wake on every event, Tom needs a clear rule in his prompt: speak to the user only on `done`, `failed`, `blocked`-needs-user, or when correcting course; otherwise stay silent.
 - **Approval timeouts.** Decide what happens if the user never approves: leave the job `awaiting_approval` indefinitely (simplest, and Jerry is idle anyway) or expire to `tool_rejected` after N minutes.

@@ -441,6 +441,146 @@ final class ReviewerTests: XCTestCase {
     }
 }
 
+/// Keeping small models on track: the prompts show the shape, and a turn that drifts (words
+/// where a call was due, a call that didn't parse, too many rounds) is caught and asked again.
+final class RecoveryTests: XCTestCase {
+    func testThePromptsShowEachOneItsOwnShape() {
+        let model = FakeModel()
+        let tom = Conversation(llm: model, model: "m", library: { [] })
+        tom.team = .lead(teammate: "Jerry")
+        let lead = tom.systemPrompt()
+        XCTAssertTrue(lead.contains("1. Anything that takes a tool"))
+        XCTAssertTrue(lead.contains("An example, for the shape only."))
+        XCTAssertTrue(lead.contains(#"{"tool": "delegate", "arguments": {"goal": "…""#), "the manual's example is his own tool")
+        XCTAssertFalse(lead.contains(#"{"tool": "list_chats""#))
+        XCTAssertTrue(lead.contains("never delegate the same thing twice"))
+        let jerry = Conversation(llm: model, model: "m", library: { [] })
+        jerry.name = "Jerry"
+        jerry.team = .member(lead: "Tom")
+        let member = jerry.systemPrompt()
+        XCTAssertTrue(member.contains("1. Every answer of yours is a tool call"))
+        XCTAssertTrue(member.contains(#"{"tool": "finish", "arguments": {"summary": "…""#))
+        XCTAssertTrue(member.contains("say in a few words what you're doing, then the call as one line of JSON"))
+        XCTAssertTrue(member.contains("Never just stop"))
+        // Alone: the manual as before.
+        XCTAssertTrue(Conversation(llm: model, model: "m", library: { [] }).systemPrompt().contains(#"{"tool": "list_chats", "arguments": {"query": "budget"}}"#))
+        // Jerry's briefing from Tom tells him what to do with it, not to answer the user.
+        XCTAssertTrue(Team.message("Job j1", from: "Tom", toWorker: true).contains("end with finish or ask_tom"))
+        XCTAssertTrue(Team.message("Hi", from: "Jerry").contains("answer him, or the user"))
+    }
+
+    func testWhatCountsAsSilenceTalkingToJerryAndABrokenCall() {
+        XCTAssertTrue(Team.isSilent("Nothing to add."))
+        XCTAssertTrue(Team.isSilent("(no action needed)"))
+        XCTAssertTrue(Team.isSilent("nothing to say"))
+        XCTAssertFalse(Team.isSilent("Nothing to add, but the timer's set."))
+        XCTAssertTrue(Team.speaksToTeammate("Jerry, look up the weather in Lagos."))
+        XCTAssertTrue(Team.speaksToTeammate("Hey Jerry: search for focus playlists"))
+        XCTAssertFalse(Team.speaksToTeammate("Jerry's on it."))
+        XCTAssertFalse(Team.speaksToTeammate("I'll ask Jerry to check."))
+        XCTAssertFalse(Team.speaksToTeammate("(nothing)"))
+        XCTAssertTrue(Team.looksLikeBrokenCall(#"{"tool": "delegate", "arguments": {"goal": "Weather in"#))
+        XCTAssertTrue(Team.looksLikeBrokenCall(#"{'tool': 'finish', 'arguments': {'summary': 'Done'}}"#))
+        XCTAssertFalse(Team.looksLikeBrokenCall(#"{"tool": "finish", "arguments": {"summary": "Done"}}"#))
+        XCTAssertFalse(Team.looksLikeBrokenCall("The tool's ready."))
+    }
+
+    func testJerryWhoStopsInWordsIsAskedForTheCall() async throws {
+        let model = FakeModel()
+        let jerry = Conversation(llm: model, model: "m", library: { [] })
+        jerry.name = "Jerry"
+        jerry.team = .member(lead: "Tom")
+        model.script = ["It's 42.", #"{"tool": "finish", "arguments": {"summary": "6 times 7 is 42."}}"#]
+        let r = try await jerry.reply("Job j1 from Tom: 6 times 7.", from: "Tom")
+        XCTAssertEqual(r.action, .finish(Job.Result(summary: "6 times 7 is 42.")))
+        XCTAssertEqual(model.sent.count, 2)
+        XCTAssertTrue(((model.sent[1].messages.last?["content"] as? String) ?? "").contains("your answer had no tool call"))
+        // Once: words again are his result (the app takes them as such).
+        model.script = ["Still 42.", "Really, 42."]
+        let again = try await jerry.reply("Job j2 from Tom: 6 times 7, again.", from: "Tom")
+        XCTAssertNil(again.action)
+        XCTAssertEqual(again.text, "Really, 42.")
+        XCTAssertEqual(model.sent.count, 4)
+    }
+
+    func testJerryOutOfRoundsIsAskedToFinish() async throws {
+        let model = FakeModel()
+        let jerry = Conversation(llm: model, model: "m", library: { [] })
+        jerry.name = "Jerry"
+        jerry.team = .member(lead: "Tom")
+        jerry.enabled = [Skills.math.id]
+        jerry.maxToolRounds = 2
+        model.script = [
+            #"One. {"tool": "calculate", "arguments": {"expression": "1 + 1"}}"#,
+            #"Two. {"tool": "calculate", "arguments": {"expression": "2 + 2"}}"#,
+            #"Three. {"tool": "calculate", "arguments": {"expression": "3 + 3"}}"#,
+            #"{"tool": "finish", "arguments": {"summary": "2, 4, and I stopped there."}}"#,
+        ]
+        let r = try await jerry.reply("Job j1 from Tom: sums.", from: "Tom")
+        XCTAssertEqual(r.action, .finish(Job.Result(summary: "2, 4, and I stopped there.")))
+        XCTAssertEqual(jerry.toolCalls, ["calculate", "calculate", "finish"], "the third sum wasn't run")
+        XCTAssertTrue(((model.sent[3].messages.last?["content"] as? String) ?? "").contains("as many tool calls as a job gets"))
+    }
+
+    func testTomTalkingToJerryInWordsIsToldToCall() async throws {
+        let model = FakeModel()
+        let tom = Conversation(llm: model, model: "m", library: { [] })
+        tom.team = .lead(teammate: "Jerry")
+        model.script = ["Jerry, check the weather in Lagos.", #"On it. {"tool": "delegate", "arguments": {"goal": "Weather in Lagos", "done_criteria": "read from a weather page", "return": "temperature"}}"#]
+        let r = try await tom.reply("What's the weather in Lagos?")
+        XCTAssertEqual(r.text, "On it.")
+        guard case .delegate? = r.action else { return XCTFail("no delegation") }
+        XCTAssertTrue(((model.sent[1].messages.last?["content"] as? String) ?? "").contains("he heard nothing"))
+    }
+
+    func testACallThatDidntParseIsAskedAgain() async throws {
+        let model = FakeModel()
+        let tom = Conversation(llm: model, model: "m", library: { [] })
+        tom.team = .lead(teammate: "Jerry")
+        model.script = [#"{"tool": "delegate", "arguments": {"goal": "Weather in"#, #"{"tool": "delegate", "arguments": {"goal": "Weather in Lagos"}}"#]
+        let r = try await tom.reply("Weather?")
+        guard case .delegate(let spec)? = r.action else { return XCTFail("no delegation") }
+        XCTAssertEqual(spec.goal, "Weather in Lagos")
+        XCTAssertTrue(((model.sent[1].messages.last?["content"] as? String) ?? "").contains("couldn't be read"))
+    }
+
+    func testOnlyTheFirstMoveInAnAnswerIsMade() async throws {
+        let model = FakeModel()
+        let tom = Conversation(llm: model, model: "m", library: { [] })
+        tom.team = .lead(teammate: "Jerry")
+        model.script = [#"{"tool": "delegate", "arguments": {"goal": "a"}} {"tool": "delegate", "arguments": {"goal": "b"}}"#, "(nothing)"]
+        let r = try await tom.reply("Do a and b.")
+        XCTAssertEqual(r.action, .delegate(Job.Spec(goal: "a")))
+        _ = try await tom.wake()
+        let m = model.sent[1].messages
+        XCTAssertTrue(((m[3]["content"] as? String) ?? "").contains("only your first call (delegate) was carried out; delegate wasn't"))
+    }
+
+    func testInterjectionsReachTheModelMidTurn() async throws {
+        let model = FakeModel()
+        let jerry = Conversation(llm: model, model: "m", library: { [] })
+        jerry.name = "Jerry"
+        jerry.team = .member(lead: "Tom")
+        jerry.enabled = [Skills.math.id]
+        model.script = [#"{"tool": "calculate", "arguments": {"expression": "1 + 1"}}"#, #"{"tool": "finish", "arguments": {"summary": "2"}}"#]
+        jerry.onToolUse = { _ in jerry.interject("Tom says, about this job: also add 3.") }
+        _ = try await jerry.reply("Job j1 from Tom: 1 + 1.", from: "Tom")
+        let m = model.sent[1].messages
+        XCTAssertEqual(m.map { $0["role"] as? String }, ["system", "user", "assistant", "user", "user"])
+        XCTAssertEqual(m[4]["content"] as? String, "Note from the Mac (not the user): Tom says, about this job: also add 3.")
+    }
+
+    func testTheSameGoalIsntDelegatedTwice() {
+        var board = JobBoard()
+        board.delegate(Job.Spec(goal: "Today's weather in Lagos"), session: UUID())
+        XCTAssertEqual(board.openJob(withGoal: "today's weather in Lagos.")?.id, "j1")
+        XCTAssertNil(board.openJob(withGoal: "Tomorrow's weather in Lagos"))
+        board.start("j1")
+        board.finish("j1", Job.Result(summary: "Sunny."))
+        XCTAssertNil(board.openJob(withGoal: "Today's weather in Lagos"), "a done job can be asked again")
+    }
+}
+
 /// Tom with Jerry never says "I can't": he delegates.
 final class DelegationTests: XCTestCase {
     func testSayingHeCantIsCaught() {
