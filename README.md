@@ -159,7 +159,8 @@ Jerry can't see or hear you, only what Tom sends him, and you hear them both.
 
 The panel's columns while AI Listen is on (or pinned with the rectangles button): the skills,
 each with a switch (the model is told only about those on), what the model used, newest first
-(click one for all of it, to copy, open or hear), and the board's searches.
+(click one for all of it, to copy, open or hear), and the board's searches. When the screen hasn't
+room for them all beside the panel, they scroll sideways.
 
 - **Library**: list and read earlier chats, and the dictations, transcripts and notes ("what did we
   say about the budget last week?", "read me yesterday's dictation").
@@ -238,7 +239,9 @@ install line again works too.
 
 ## The panel
 
-Click the waveform in the menu bar:
+Click the waveform in the menu bar. The panel is two columns: the tools and the models on the
+left, the voice, endpoints and sharing on the right, with the switches across the top and the bottom
+bar under both.
 
 - **Listen**: always listen for "Tom" (see below). The hand: with Listen on, watch the camera for a
   wave, which starts AI Listen too. The rectangles: show the skills. **Start / Stop**: serving the
