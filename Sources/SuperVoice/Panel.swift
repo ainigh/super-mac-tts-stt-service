@@ -78,13 +78,6 @@ struct PanelView: View {
             .buttonStyle(PillButton(tint: Palette.orange, filled: assistant.settings.wave && assistant.alwaysListen))
             .help(assistant.settings.wave ? "With Listen on, a wave at the camera starts AI Listen (the camera's light is on while it watches). Click to turn the camera off."
                                           : "Watch the camera while Listen is on: a wave starts AI Listen")
-            Button {
-                board.pinned.toggle()
-            } label: {
-                Image(systemName: board.pinned ? "sidebar.right" : "rectangle.split.3x1")
-            }
-            .buttonStyle(PillButton(tint: Palette.violet, filled: board.pinned))
-            .help(board.pinned ? "Hide the skills" : "Show the skills (what the model can use, and what it used)")
             Button(service.wantsServing ? "Stop" : "Start") {
                 service.wantsServing ? service.stopServing() : service.startServing()
             }
@@ -480,8 +473,9 @@ struct PillButton: ButtonStyle {
     }
 }
 
-/// Everything the panel holds: the main panel, and the skills' columns beside it when they're
-/// wanted (AI Listen on, or pinned), scrolling sideways when the screen hasn't room for them all.
+/// Everything the panel holds: the main panel, and the columns beside it (the team, its jobs, the
+/// skills and the scripts; what they used), always out, scrolling sideways when the screen hasn't
+/// room for them all.
 /// Reports its size, so the panel fits it as columns come and go.
 struct PanelRoot: View {
     @ObservedObject var board = SkillsModel.shared

@@ -3,23 +3,14 @@ import Combine
 import Foundation
 import VoiceCore
 
-/// The Skills board beside the panel: what the model may use when you talk with it (column 2,
-/// each switched on or off, and your sites to search), what it used (column 3, newest first, this
-/// session), and one of those opened in full (column 4). It shows while AI Listen is on, or when
-/// pinned (the rectangles button). On the main thread.
+/// The columns beside the panel, always out: the team, its jobs, the skills (each switched on or
+/// off) and the scripts Tool Mac Tool Run has (column 2); what they used (column 3, newest first,
+/// this session); and one of those opened in full (column 4). On the main thread.
 final class SkillsModel: ObservableObject {
     static let shared = SkillsModel()
 
     /// The skills that are on.
     @Published private(set) var enabled: Set<String>
-    /// The sites the model can search, in the browser.
-    @Published private(set) var sites: [Site]
-    /// The web search, with {query} where the words go.
-    @Published private(set) var searchTemplate: String
-    /// Pages the model opens come to the front, where you see them (else behind, unless you ask).
-    @Published private(set) var showBrowser: Bool
-    /// The columns stay out even when AI Listen is off.
-    @Published var pinned: Bool { didSet { defaults.set(pinned, forKey: "boardPinned") } }
     /// What the model used, newest first.
     @Published private(set) var uses: [ToolUse] = []
     /// A skill clicked in column 2: column 3 shows only what it did.
@@ -31,37 +22,28 @@ final class SkillsModel: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private var noticeClear: DispatchWorkItem?
-    private var watching: Set<AnyCancellable> = []
     static let maxUses = 200
 
     private init() {
         let saved = UserDefaults.standard
-        var on = Set(saved.stringArray(forKey: "skillsOn") ?? Skills.ids)
+        // Only the skills there still are (the browser, files and the rest went to Tool Mac Tool Run).
+        var on = Set(saved.stringArray(forKey: "skillsOn") ?? Skills.ids).intersection(Skills.ids)
         // Jerry came after the skills were first saved: he's on once, until switched off.
         if !saved.bool(forKey: "skillTeamAdded") {
             on.insert(Skills.team.id)
             saved.set(true, forKey: "skillTeamAdded")
-            saved.set(Array(on).sorted(), forKey: "skillsOn")
         }
+        // Scripts are how Jerry reaches the Mac now: on once, until switched off.
+        if !saved.bool(forKey: "skillScriptsMain") {
+            on.insert(Skills.scripts.id)
+            saved.set(true, forKey: "skillScriptsMain")
+        }
+        saved.set(Array(on).sorted(), forKey: "skillsOn")
         enabled = on
-        if let data = saved.data(forKey: "skillSites"), let s = try? JSONDecoder().decode([Site].self, from: data) {
-            sites = s
-        } else {
-            sites = Site.defaults
-        }
-        searchTemplate = saved.string(forKey: "skillSearch") ?? SkillRunner.defaultSearch
-        pinned = saved.bool(forKey: "boardPinned")
-        showBrowser = saved.object(forKey: "skillShowBrowser") as? Bool ?? true
     }
 
-    func setShowBrowser(_ on: Bool) {
-        showBrowser = on
-        defaults.set(on, forKey: "skillShowBrowser")
-        AssistantModel.shared.skillsChanged()
-    }
-
-    /// Columns 2 and 3 show.
-    var showsColumns: Bool { pinned || AssistantModel.shared.on }
+    /// Columns 2 and 3 show: always.
+    var showsColumns: Bool { true }
     /// Column 4 shows.
     var showsDetail: Bool { opened != nil }
 
@@ -78,8 +60,10 @@ final class SkillsModel: ObservableObject {
     func missing(_ skill: Skill) -> String? {
         switch skill.id {
         case Skills.scripts.id:
-            return AssistantModel.shared.settings.toolRunURL.trimmingCharacters(in: .whitespaces).isEmpty
-                ? "Set Tool Mac Tool Run's address in AI Listen's settings" : nil
+            if AssistantModel.shared.settings.toolRunURL.trimmingCharacters(in: .whitespaces).isEmpty {
+                return "Set Tool Mac Tool Run's address in AI Listen's settings"
+            }
+            return AssistantModel.shared.catalogProblem
         default:
             return nil
         }
@@ -102,44 +86,6 @@ final class SkillsModel: ObservableObject {
     func clearUses() {
         uses = []
         opened = nil
-    }
-
-    // MARK: Sites
-
-    /// "wiki https://en.wikipedia.org/wiki/{query}": added, or why not.
-    @discardableResult
-    func addSite(_ line: String) -> Bool {
-        guard let site = Site.parse(line) else {
-            say("A site is one word, then its search address with {query} in it")
-            return false
-        }
-        sites.removeAll { $0.name == site.name }
-        sites.append(site)
-        saveSites()
-        say("Added \(site.name)")
-        return true
-    }
-
-    func removeSite(_ site: Site) {
-        sites.removeAll { $0 == site }
-        saveSites()
-    }
-
-    func setSearch(_ template: String) {
-        let t = template.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard Site(name: "search", template: t).url(for: "test") != nil else {
-            say("The search needs a web address, with {query} where the words go")
-            return
-        }
-        searchTemplate = t
-        defaults.set(t, forKey: "skillSearch")
-        AssistantModel.shared.skillsChanged()
-        say("Searches go to \(Site(name: "", template: t).host)")
-    }
-
-    private func saveSites() {
-        if let data = try? JSONEncoder().encode(sites) { defaults.set(data, forKey: "skillSites") }
-        AssistantModel.shared.skillsChanged()
     }
 
     // MARK: Options

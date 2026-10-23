@@ -272,12 +272,9 @@ public enum AssistantTools {
         "write_note": "add_note", "make_note": "add_note", "add_notes": "add_note", "save": "add_note", "add_library_item": "add_note",
         "edit_library": "update_library", "update_note": "update_library", "append_note": "update_library",
         "edit_note": "update_library", "change_library": "update_library", "library_update": "update_library", "update_library_item": "update_library",
-        "search_web": "web_search", "search": "web_search", "google": "web_search", "websearch": "web_search", "internet_search": "web_search",
-        "open_url": "open_page", "browse": "open_page", "open_website": "open_page", "open_link": "open_page", "visit": "open_page",
-        "open_browser": "show_browser", "bring_browser": "show_browser",
-        "open_window": "show_app", "show_window": "show_app", "open_app": "show_app", "show_library": "show_app", "open_library": "show_app",
         "search_library": "list_library", "list_notes": "list_library", "read_note": "read_library", "read_notes": "read_library",
-        "calculator": "calculate", "calc": "calculate", "math": "calculate",
+        "run": "run_script", "execute": "run_script", "execute_script": "run_script", "run_tool": "run_script", "scripts": "list_scripts",
+        "list_tools": "list_scripts", "get_request": "check_request", "request_status": "check_request", "check_run": "check_request",
     ]
 
     /// The tool a name means: itself, or the one it's a common slip for.
@@ -562,8 +559,6 @@ public final class Conversation {
     public var library: () -> [LibraryRecord]
     /// Tool Mac Tool Run, when the model may run the user's scripts and flows through it.
     public var runner: ScriptRunner?
-    /// The skills that need the Mac (the browser, files, the clipboard, its status), when it has them.
-    public var skills: SkillRunner?
     /// Saves a library item the model added or changed (nil: it can't edit the library).
     public var save: ((LibraryRecord) -> Void)?
     /// The skills that are on (see `Skills`); one that needs what isn't there is left out anyway.
@@ -585,6 +580,9 @@ public final class Conversation {
     /// More for the system prompt, from the app, read afresh each time it's sent: Tom's memory and
     /// the open jobs; Jerry's standing instructions.
     public var extraPrompt: (() -> String)?
+    /// Where the jobs stand now, read afresh with each message from the user and put before it
+    /// (Tom's, with the team): nil when nothing is open.
+    public var situation: (() -> String?)?
     /// Tools the app runs (Tom's memory, a job's status): listed with the others, answered by `custom`.
     public var extraTools: [AssistantTools.Tool] = []
     /// Runs one of `extraTools` (by its name, with its arguments): what the model is told.
@@ -683,7 +681,6 @@ public final class Conversation {
         c.wire = wire
         c.toolCalls = toolCalls
         c.runner = runner
-        c.skills = skills
         c.save = save
         c.enabled = enabled
         c.onToolUse = onToolUse
@@ -693,6 +690,7 @@ public final class Conversation {
         c.team = team
         c.onActivity = onActivity
         c.extraPrompt = extraPrompt
+        c.situation = situation
         c.extraTools = extraTools
         c.custom = custom
         c.needsApproval = needsApproval
@@ -710,7 +708,6 @@ public final class Conversation {
             switch s.id {
             case Skills.editing.id: return save != nil
             case Skills.scripts.id: return runner != nil
-            case Skills.browser.id, Skills.files.id, Skills.clipboard.id, Skills.mac.id, Skills.app.id: return skills != nil
             case Skills.team.id: return false
             default: return true
             }
@@ -719,7 +716,7 @@ public final class Conversation {
 
     /// The tools the model may call.
     public var tools: [AssistantTools.Tool] {
-        var t = activeSkills.flatMap { Skills.tools($0.id, sites: skills?.sites ?? [], teammate: teammate ?? Team.teammate) }
+        var t = activeSkills.flatMap { Skills.tools($0.id, teammate: teammate ?? Team.teammate) }
         if case .member(let lead) = team { t += JobTools.worker(lead: lead) }
         return t + extraTools
     }
@@ -733,7 +730,7 @@ public final class Conversation {
     /// The tools whose call ends the turn, by name, each with the job move it makes.
     var terminalTools: [String] {
         switch team {
-        case .lead(let t): return ["delegate", "message_\(t.lowercased())", "cancel_job", "stop_everything"]
+        case .lead(let t): return ["delegate", "ask_\(Team.reviewer.lowercased())", "message_\(t.lowercased())", "cancel_job", "stop_everything"]
         case .member(let l): return ["ask_\(l.lowercased())", "finish"]
         case nil: return []
         }
@@ -748,7 +745,16 @@ public final class Conversation {
     func move(for name: String, _ args: [String: Any]) -> Move {
         switch name {
         case "delegate":
+            // "ask_jerry" with a job_id and no goal is a word about that job, not a new one.
+            if args["goal"] == nil, let id = JobTools.jobID(args),
+               let text = ToolRunTools.string(args["message"] ?? args["text"] ?? args["answer"] ?? args["question"]) {
+                return .act(.message(job: JobBoard.normalize(id), text: text.trimmingCharacters(in: .whitespacesAndNewlines)))
+            }
             guard let spec = JobTools.spec(args) else { return .refuse("Give the job's goal (and done_criteria, and what to return).") }
+            return .act(.delegate(spec))
+        case "ask_\(Team.reviewer.lowercased())":
+            guard var spec = JobTools.spec(args) else { return .refuse("Give the question (goal), in full.") }
+            spec.worker = Team.reviewer
             return .act(.delegate(spec))
         case "cancel_job":
             guard let id = JobTools.jobID(args) else { return .refuse("Give the job_id.") }
@@ -853,7 +859,9 @@ public final class Conversation {
             wire.append(["role": "user", "content": Self.stamped(Team.message(question, from: from, toWorker: worker), now: now)])
         } else {
             turns.append(ChatTurn(role: .user, text: question, time: now))
-            wire.append(["role": "user", "content": Self.stamped(question, now: now)])
+            var content = question
+            if let standing = situation?() { content = "Where the jobs stand now (from the Mac): \(standing)\n\nThe user says: \(question)" }
+            wire.append(["role": "user", "content": Self.stamped(content, now: now)])
         }
         defer { onActivity?(.idle) }
         do {
@@ -865,6 +873,8 @@ public final class Conversation {
             // Each nudge (a note from the Mac asking for another go) is given once a question, so a
             // model that doesn't take it can't be sent round in circles.
             var edited = false, nudged = false, brokenNudged = false, stoppedNudged = false, roundsNudged = false
+            // A tool ran for this question (Tom's memory, a job's status): his words after it are an answer.
+            var usedTool = false
             let worker: Bool = { if case .member = team { return true } else { return false } }()
             while true {
                 onActivity?(.model)
@@ -926,6 +936,16 @@ public final class Conversation {
                     wire.append(["role": "user", "content": Team.spokeToTeammateMessage(teammate: teammate)])
                     continue
                 }
+                if calls.isEmpty, !nudged, !usedTool, round < maxToolRounds, !wake, from == nil, let teammate, !Team.isSilent(reply),
+                   Team.promisesWork(reply, teammate: teammate) || (Team.asksForAJob(question) && !Team.asksBack(reply)) {
+                    // (A memory note or a job's status looked up is an answer; so is a question back.)
+                    // Tom answered the user in words and made no job: told that nothing is being done.
+                    nudged = true
+                    round += 1
+                    wire.append(["role": "assistant", "content": reply])
+                    wire.append(["role": "user", "content": Team.routerMessage(teammate: teammate)])
+                    continue
+                }
                 if calls.isEmpty, worker, !stoppedNudged, round < maxToolRounds {
                     // Jerry answered in words alone: no finish, no question, no tool. Told that nothing
                     // happened, and asked for the call (once; after that his words are his result).
@@ -957,6 +977,7 @@ public final class Conversation {
                     break
                 }
                 round += 1
+                usedTool = true
                 if !replyOnWire { wire.append(["role": "assistant", "content": reply]) }
                 if records == nil { records = library() }
                 for call in calls {
@@ -1012,7 +1033,7 @@ public final class Conversation {
         case nil: return nil
         }
         switch action {
-        case .delegate(let spec): return ChatTurn(role: .assistant, text: spec.text, name: name, to: other)
+        case .delegate(let spec): return ChatTurn(role: .assistant, text: spec.text, name: name, to: spec.assignee)
         case .message(let job, let text): return ChatTurn(role: .assistant, text: "\(job): \(text)", name: name, to: other)
         case .cancel(let job): return ChatTurn(role: .assistant, text: "Cancel \(job).", name: name, to: other)
         case .ask(let question): return ChatTurn(role: .assistant, text: question, name: name, to: other)
@@ -1047,7 +1068,6 @@ public final class Conversation {
         let args = call.arguments
         if extraTools.contains(where: { $0.name == name }), let custom, let result = await custom(name, args) { return result }
         if let result = AssistantTools.run(name, args, library: records, current: id) { return result }
-        if name == "show_app", let host = skills?.host { return await showApp(args, records: records, host: host) }
         if let (result, record) = AssistantTools.edit(name, args, library: records) {
             if let record, let save {
                 save(record)
@@ -1055,33 +1075,8 @@ public final class Conversation {
             }
             return result
         }
-        if name == "calculate" { return Calculator.run(args) }
         if let runner, let result = await ToolRunTools.run(name, args, via: runner) { return result }
-        if let skills, let result = await skills.run(name, args) { return result }
         return AssistantTools.unknown(call.name, among: tools)
-    }
-
-    /// Opens one of the app's windows: at an item (a chat opens in the AI library), or searched.
-    func showApp(_ args: [String: Any], records: [LibraryRecord], host: MacHost) async -> String {
-        var window = ToolRunTools.string(args["window"] ?? args["name"]).flatMap(AppWindow.init(said:))
-        var item: LibraryRecord?
-        if let id = ToolRunTools.string(args["item"] ?? args["id"]) {
-            let key = id.trimmingCharacters(in: .whitespaces).uppercased()
-            let found = records.filter { $0.id.uuidString.hasPrefix(key) }
-            guard found.count == 1, let r = found.first else {
-                return found.isEmpty ? "Nothing has the id \(id)." : "The id \(id) matches more than one item; give more of it."
-            }
-            item = r
-            window = r.kind == .chat ? .ai_library : .library
-        }
-        guard let window else {
-            return "Say which window: " + AppWindow.allCases.map(\.rawValue).joined(separator: ", ") + "."
-        }
-        let query = ToolRunTools.string(args["query"] ?? args["search"])
-        guard await host.showApp(window, item: item?.id, query: query) else { return "The \(window.rawValue) window didn't open." }
-        var said = "Opened \(window.rawValue.replacingOccurrences(of: "_", with: " ")) for the user"
-        if let item { said += ", at “\(item.title)”" } else if let query { said += ", searched for “\(query)”" }
-        return said + "."
     }
 
     /// A question as the model gets it: with the date and time it was said, written out in full.
@@ -1133,10 +1128,10 @@ public struct ToolUse: Codable, Equatable, Sendable, Identifiable {
         }.joined(separator: ", ")
     }
 
-    /// The first web address it was about (a page opened), for opening again.
+    /// The first web address it was about (a page a script opened or printed), for opening again.
     public var link: URL? {
         let o = JSON.object(Data(arguments.utf8)) ?? [:]
-        if let u = o["url"] as? String, let url = FileSkill.webURL(u) { return url }
+        if let u = o["url"] as? String, let url = URL(string: u.hasPrefix("http") ? u : "https://" + u), url.host != nil { return url }
         guard let r = result.range(of: #"(?m)^Address: (\S+)"#, options: .regularExpression) else { return nil }
         return URL(string: String(result[r].dropFirst("Address: ".count)))
     }

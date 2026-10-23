@@ -25,9 +25,9 @@ final class TeamTests: XCTestCase {
         XCTAssertTrue(chat.tools.contains { $0.name == "list_chats" })
         chat.team = .lead(teammate: "Jerry")
         XCTAssertEqual(chat.activeSkills.map(\.id), ["team"])
-        XCTAssertEqual(chat.tools.map(\.name), ["delegate", "job_status", "message_jerry", "cancel_job", "stop_everything"])
+        XCTAssertEqual(chat.tools.map(\.name), ["delegate", "ask_jane", "job_status", "message_jerry", "cancel_job", "stop_everything"])
         XCTAssertTrue(chat.systemPrompt().contains("- delegate:"))
-        XCTAssertTrue(chat.systemPrompt().contains("You are the supervisor"))
+        XCTAssertTrue(chat.systemPrompt().contains("You are the face"))
         XCTAssertTrue(chat.systemPrompt().hasPrefix("You are Tom,"))
         chat.extraTools = Memory.tools
         XCTAssertTrue(chat.tools.contains { $0.name == "remember" })
@@ -119,22 +119,22 @@ final class TeamTests: XCTestCase {
         var uses: [ToolUse] = []
         jerry.onNarration = { narrated.append($0) }
         jerry.onToolUse = { uses.append($0) }
-        jerry.needsApproval = { $0 == "calculate" }
+        jerry.needsApproval = { $0 == "list_library" }
         jerry.approval = { call in
             asked.append(call.name)
             return asked.count == 1            // the first is approved, the second rejected
         }
-        jerry.enabled = [Skills.math.id]
+        jerry.enabled = [Skills.library.id]
         model.script = [
-            #"I'll work it out. {"tool": "calculate", "arguments": {"expression": "6 * 7"}}"#,
-            #"And once more. {"tool": "calculate", "arguments": {"expression": "1 + 1"}}"#,
+            #"I'll work it out. {"tool": "list_library", "arguments": {"query": "6 * 7"}}"#,
+            #"And once more. {"tool": "list_library", "arguments": {"query": "1 + 1"}}"#,
             #"{"tool": "finish", "arguments": {"summary": "6 times 7 is 42.", "details": "Worked it out; the second sum was refused."}}"#,
         ]
         let r = try await jerry.reply(JobBoard.briefing(Job(id: "j1", session: UUID(), spec: Job.Spec(goal: "6 times 7")), messages: []), from: "Tom")
         XCTAssertEqual(r.action, .finish(Job.Result(summary: "6 times 7 is 42.", details: "Worked it out; the second sum was refused.")))
         XCTAssertEqual(narrated, ["I'll work it out.", "And once more."])
-        XCTAssertEqual(asked, ["calculate", "calculate"])
-        XCTAssertEqual(uses.map(\.result), ["6 * 7 = 42", AssistantTools.rejectedMessage])
+        XCTAssertEqual(asked, ["list_library", "list_library"])
+        XCTAssertEqual(uses.map(\.result), ["Nothing in the library matches.", AssistantTools.rejectedMessage])
         XCTAssertEqual(jerry.turns.last?.text, "6 times 7 is 42.")
         XCTAssertEqual(jerry.turns.last?.name, "Jerry")
         XCTAssertNil(jerry.turns.last?.to)
@@ -449,11 +449,12 @@ final class RecoveryTests: XCTestCase {
         let tom = Conversation(llm: model, model: "m", library: { [] })
         tom.team = .lead(teammate: "Jerry")
         let lead = tom.systemPrompt()
-        XCTAssertTrue(lead.contains("1. Anything that takes a tool"))
+        XCTAssertTrue(lead.contains("1. Every request from the user is a job"))
         XCTAssertTrue(lead.contains("An example, for the shape only."))
         XCTAssertTrue(lead.contains(#"{"tool": "delegate", "arguments": {"goal": "…""#), "the manual's example is his own tool")
         XCTAssertFalse(lead.contains(#"{"tool": "list_chats""#))
-        XCTAssertTrue(lead.contains("never delegate the same thing twice"))
+        XCTAssertTrue(lead.contains("never the same thing twice while it's open"))
+        XCTAssertTrue(lead.contains(#"{"tool": "ask_jane", "arguments": {"goal": "What are the five senses?""#), "the brain is shown too")
         let jerry = Conversation(llm: model, model: "m", library: { [] })
         jerry.name = "Jerry"
         jerry.team = .member(lead: "Tom")
@@ -508,17 +509,17 @@ final class RecoveryTests: XCTestCase {
         let jerry = Conversation(llm: model, model: "m", library: { [] })
         jerry.name = "Jerry"
         jerry.team = .member(lead: "Tom")
-        jerry.enabled = [Skills.math.id]
+        jerry.enabled = [Skills.library.id]
         jerry.maxToolRounds = 2
         model.script = [
-            #"One. {"tool": "calculate", "arguments": {"expression": "1 + 1"}}"#,
-            #"Two. {"tool": "calculate", "arguments": {"expression": "2 + 2"}}"#,
-            #"Three. {"tool": "calculate", "arguments": {"expression": "3 + 3"}}"#,
+            #"One. {"tool": "list_library", "arguments": {"query": "1"}}"#,
+            #"Two. {"tool": "list_library", "arguments": {"query": "2"}}"#,
+            #"Three. {"tool": "list_library", "arguments": {"query": "3"}}"#,
             #"{"tool": "finish", "arguments": {"summary": "2, 4, and I stopped there."}}"#,
         ]
         let r = try await jerry.reply("Job j1 from Tom: sums.", from: "Tom")
         XCTAssertEqual(r.action, .finish(Job.Result(summary: "2, 4, and I stopped there.")))
-        XCTAssertEqual(jerry.toolCalls, ["calculate", "calculate", "finish"], "the third sum wasn't run")
+        XCTAssertEqual(jerry.toolCalls, ["list_library", "list_library", "finish"], "the third look wasn't run")
         XCTAssertTrue(((model.sent[3].messages.last?["content"] as? String) ?? "").contains("as many tool calls as a job gets"))
     }
 
@@ -561,8 +562,8 @@ final class RecoveryTests: XCTestCase {
         let jerry = Conversation(llm: model, model: "m", library: { [] })
         jerry.name = "Jerry"
         jerry.team = .member(lead: "Tom")
-        jerry.enabled = [Skills.math.id]
-        model.script = [#"{"tool": "calculate", "arguments": {"expression": "1 + 1"}}"#, #"{"tool": "finish", "arguments": {"summary": "2"}}"#]
+        jerry.enabled = [Skills.library.id]
+        model.script = [#"{"tool": "list_library", "arguments": {}}"#, #"{"tool": "finish", "arguments": {"summary": "2"}}"#]
         jerry.onToolUse = { _ in jerry.interject("Tom says, about this job: also add 3.") }
         _ = try await jerry.reply("Job j1 from Tom: 1 + 1.", from: "Tom")
         let m = model.sent[1].messages
@@ -578,6 +579,135 @@ final class RecoveryTests: XCTestCase {
         board.start("j1")
         board.finish("j1", Job.Result(summary: "Sunny."))
         XCTAssertNil(board.openJob(withGoal: "Today's weather in Lagos"), "a done job can be asked again")
+    }
+}
+
+/// Tom is the face: every request goes to Jerry (to do) or Jane (to know), he reads where the jobs
+/// stand before he answers, and a promise without the call is caught.
+final class RouterTests: XCTestCase {
+    func testWhatIsARequestAndWhatIsAPromise() {
+        XCTAssertTrue(Team.asksForAJob("What are the five senses?"))
+        XCTAssertTrue(Team.asksForAJob("Put on some music."))
+        XCTAssertFalse(Team.asksForAJob("Thanks, Tom."))
+        XCTAssertFalse(Team.asksForAJob("Hi there"))
+        XCTAssertFalse(Team.asksForAJob("How is it going?"))
+        XCTAssertFalse(Team.asksForAJob("Is it done yet?"))
+        XCTAssertFalse(Team.asksForAJob("Any news?"))
+        XCTAssertTrue(Team.promisesWork("I'll have Jerry check."))
+        XCTAssertTrue(Team.promisesWork("Let me look into that."))
+        XCTAssertTrue(Team.promisesWork("Jerry's on it."))
+        XCTAssertTrue(Team.promisesWork("One moment."))
+        XCTAssertFalse(Team.promisesWork("Lagos is 28 and sunny."))
+        XCTAssertFalse(Team.promisesWork("(nothing)"))
+        XCTAssertTrue(Team.asksBack("Which city?"))
+        XCTAssertFalse(Team.asksBack("Shall I have Jerry check?") && Team.promisesWork("Shall I have Jerry check?"))
+    }
+
+    func testAPromiseWithoutTheCallIsCaught() async throws {
+        let model = FakeModel()
+        let tom = Conversation(llm: model, model: "m", library: { [] })
+        tom.team = .lead(teammate: "Jerry")
+        model.script = ["I'll have Jerry check the weather.", #"On it. {"tool": "delegate", "arguments": {"goal": "Weather in Lagos"}}"#]
+        let r = try await tom.reply("What's the weather in Lagos?")
+        guard case .delegate(let spec)? = r.action else { return XCTFail("no delegation") }
+        XCTAssertEqual(spec.goal, "Weather in Lagos")
+        XCTAssertNil(spec.worker)
+        XCTAssertTrue(((model.sent[1].messages.last?["content"] as? String) ?? "").contains("made no job, so nothing is being done"))
+    }
+
+    func testKnowledgeGoesToJane() async throws {
+        let model = FakeModel()
+        let tom = Conversation(llm: model, model: "m", library: { [] })
+        tom.team = .lead(teammate: "Jerry")
+        // He answers it himself first: told it's a job, he asks Jane.
+        model.script = ["Sight, hearing, smell, taste and touch.", #"I'll ask Jane. {"tool": "ask_jane", "arguments": {"goal": "What are the five senses?", "return": "the five"}}"#]
+        let r = try await tom.reply("What are the five senses?")
+        XCTAssertEqual(r.text, "I'll ask Jane.")
+        guard case .delegate(let spec)? = r.action else { return XCTFail("no question") }
+        XCTAssertEqual(spec.worker, "Jane")
+        XCTAssertTrue(spec.isQuestion)
+        XCTAssertEqual(tom.turns.last?.to, "Jane")
+        XCTAssertEqual(AssistantTools.canonical("consult_jane"), "ask_jane")
+        // A greeting, or a question back, is let be.
+        model.script = ["Hi! What can I do?"]
+        let hi = try await tom.reply("Hello")
+        XCTAssertEqual(hi.text, "Hi! What can I do?")
+        model.script = ["Which city?"]
+        let back = try await tom.reply("What's the weather?")
+        XCTAssertEqual(back.text, "Which city?")
+        XCTAssertEqual(model.sent.count, 4)
+        // ask_jerry with a job and no goal is a word about that job.
+        model.script = [#"{"tool": "ask_jerry", "arguments": {"job_id": "j2", "message": "Use Celsius."}}"#]
+        let word = try await tom.reply("Tell him Celsius")
+        XCTAssertEqual(word.action, .message(job: "j2", text: "Use Celsius."))
+    }
+
+    func testTomReadsWhereTheJobsStandBeforeEachAnswer() async throws {
+        var board = JobBoard()
+        let session = UUID()
+        board.delegate(Job.Spec(goal: "Today's weather in Lagos"), session: session)
+        board.delegate(Job.Spec(goal: "The five senses", worker: "Jane"), session: session)
+        board.start("j1")
+        XCTAssertEqual(board.standing(session: session), "j1 (Jerry): running: Today's weather in Lagos; j2 (Jane): queued: The five senses")
+        XCTAssertNil(JobBoard().standing(session: session))
+        let model = FakeModel()
+        let tom = Conversation(llm: model, model: "m", library: { [] })
+        tom.team = .lead(teammate: "Jerry")
+        let standing = board.standing(session: session)
+        tom.situation = { standing }
+        model.script = ["Jerry's still on the weather; nothing's back yet."]
+        let r = try await tom.reply("How's it going?")
+        XCTAssertEqual(r.text, "Jerry's still on the weather; nothing's back yet.")
+        let said = (model.sent[0].messages.last?["content"] as? String) ?? ""
+        XCTAssertTrue(said.hasPrefix("Where the jobs stand now (from the Mac): j1 (Jerry): running"))
+        XCTAssertTrue(said.contains("The user says: How's it going?"))
+        XCTAssertEqual(tom.turns.first?.text, "How's it going?", "the room shows what was said, not the note")
+    }
+
+    func testJaneHasHerOwnQueueAndBriefing() {
+        var board = JobBoard()
+        let session = UUID()
+        board.delegate(Job.Spec(goal: "Weather"), session: session)
+        board.delegate(Job.Spec(goal: "What are the five senses?", returns: "the five", worker: "Jane"), session: session)
+        XCTAssertEqual(board.nextQueued()?.id, "j1")
+        XCTAssertEqual(board.nextQueued(for: "Jane")?.id, "j2")
+        board.start("j1")
+        XCTAssertEqual(board.nextQueued(for: "Jane")?.id, "j2", "Jerry's job doesn't hold Jane up")
+        board.start("j2")
+        XCTAssertEqual(board.current(for: "Jane")?.id, "j2")
+        XCTAssertEqual(board.current?.id, "j1")
+        let q = JobBoard.question(board.job("j2")!)
+        XCTAssertTrue(q.hasPrefix("Question j2 from Tom: What are the five senses?"))
+        XCTAssertTrue(q.contains("He wants back: the five"))
+        XCTAssertEqual(board.job("j2")?.headline, "j2 (Jane): Running")
+        board.requeue("j2")
+        XCTAssertEqual(board.job("j2")?.status, .queued)
+        XCTAssertEqual(board.job("j1")?.status, .running, "requeue takes one job off, not all")
+        XCTAssertTrue(Team.thinkerPrompt().hasPrefix("You are Jane, the brain of the team."))
+    }
+}
+
+/// Tool Mac Tool Run's scripts and flows, fetched once and told to the models.
+final class CatalogTests: XCTestCase {
+    func testTheCatalogIsReadAndTold() async {
+        let runner = FakeRunner()
+        runner.script = [(200, ["folder": "/Users/sam/Scripts", "scripts": [
+            ["name": "browser/page-info.sh", "group": "browser", "language_name": "Bash", "summary": "The page in front of your browser", "dangers": [String]()],
+            ["name": "tidy.py", "group": "scripts", "language_name": "Python", "summary": "Moves old downloads to the Trash", "dangers": ["deletes files"]],
+        ]]), (200, ["flows": [["name": "morning.flow", "summary": "The day's first checks"]]])]
+        let c = await ToolRunTools.catalog(via: runner)
+        XCTAssertEqual(c?.scripts.map(\.name), ["browser/page-info.sh", "tidy.py"])
+        XCTAssertEqual(c?.flows.map(\.name), ["morning.flow"])
+        XCTAssertEqual(runner.sent.map(\.path), ["/api/scripts", "/api/flows"])
+        let prompt = c?.prompt ?? ""
+        XCTAssertTrue(prompt.contains("- browser/page-info.sh (Bash): The page in front of your browser"))
+        XCTAssertTrue(prompt.contains("[can't be undone: deletes files]"))
+        XCTAssertTrue(prompt.contains("- morning.flow: The day's first checks"))
+        XCTAssertTrue((c?.summary ?? "").contains("tidy.py (Moves old downloads to the Trash)"))
+        runner.down = true
+        let none = await ToolRunTools.catalog(via: runner)
+        XCTAssertNil(none)
+        XCTAssertEqual(ToolRunTools.Catalog().prompt, "")
     }
 }
 
@@ -598,10 +728,10 @@ final class DelegationTests: XCTestCase {
         let model = FakeModel()
         let tom = Conversation(llm: model, model: "m", library: { [] })
         tom.team = .lead(teammate: "Jerry")
-        tom.enabled = [Skills.browser.id, Skills.files.id]
-        tom.skills = SkillRunner(host: FakeMac())
-        XCTAssertTrue(tom.systemPrompt().contains("Jerry's skills now: browser"))
-        XCTAssertTrue(tom.systemPrompt().contains("Never answer \"I can't\""))
+        tom.enabled = [Skills.library.id, Skills.scripts.id]
+        tom.runner = FakeRunner()
+        XCTAssertTrue(tom.systemPrompt().contains("Jerry's skills now: library"))
+        XCTAssertTrue(tom.systemPrompt().contains("never say \"I can't\""))
         model.script = ["I don't have access to the weather.", #"Let me find out. {"tool": "delegate", "arguments": {"goal": "Today's weather in Lagos", "done_criteria": "the forecast, from a weather site", "return": "temperature and conditions"}}"#]
         let r = try await tom.reply("What's the weather in Lagos?")
         XCTAssertEqual(r.text, "Let me find out.")

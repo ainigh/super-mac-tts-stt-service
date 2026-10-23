@@ -77,7 +77,7 @@ enum Windows {
             case .transcribe: return NSSize(width: 680, height: 580)
             case .library: return NSSize(width: 980, height: 680)
             case .assistant: return NSSize(width: 640, height: 680)
-            case .chats: return NSSize(width: 940, height: 640)
+            case .chats: return NSSize(width: 1000, height: 680)
             case .memory: return NSSize(width: 620, height: 680)
             }
         }
@@ -86,7 +86,21 @@ enum Windows {
     private static var open: [Kind: NSWindow] = [:]
     private static let closer = Closer()
 
+    /// Opens a window. The library and the chats share one (the AI library, a tab each).
     static func show(_ kind: Kind) {
+        switch kind {
+        case .library:
+            ChatsView.Selection.shared.tab = .library
+            present(.chats)
+        case .chats:
+            ChatsView.Selection.shared.tab = .chats
+            present(.chats)
+        default:
+            present(kind)
+        }
+    }
+
+    private static func present(_ kind: Kind) {
         NSApp.activate()
         if let w = open[kind] {
             w.makeKeyAndOrderFront(nil)

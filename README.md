@@ -7,23 +7,25 @@ A menu bar app for the Mac that does speech, offline, and does it well:
 - **Dictate**: talk for as long as you like (pauses don't stop it), edit it, keep it.
 - **Transcribe**: drop audio or video files, get their text (and subtitles), kept with the rest.
 - **Library**: everything kept, in a grid: search, filter, star, open to edit, read it back, copy,
-  save as .txt / .srt / .vtt, delete.
+  save as .txt / .srt / .vtt, delete. It's the second tab of the AI library window (⌘2).
 - **AI listen**: talk with [Ollama](https://ollama.com) by voice: click the tile and talk, or say **"Tom"**
   (or wave at the camera), then talk; the answer is read back. Wave, or press Stop talking, to stop it (or turn **Barge in** on and talk over it). It turns off
   after three minutes with nothing said, with a sound as it does. Soft sounds every few seconds say
   what it's working on.
-- **Tom, Jerry and Jane**: a second assistant, Jerry, with his own model and voice, who does the
-  work. Tom hands him jobs with a spec, you hear them both, Jerry's tool calls that change something
-  wait for your approval, and Tom checks each result and sends it back if it misses; then Jane, the
-  reviewer, reads the job and tells Jerry what to do differently. Tom learns from each job into a
-  memory you can read and edit, which also holds your standing instructions for both. The app says
-  "standing down" before it turns off, and not while work is pending.
+- **Tom, Jerry and Jane**: three assistants, each with a model and a voice. Tom is the face: you
+  talk to him, he works out what you want and hands every request on, and tells you where it
+  stands. Jerry is the engine: he does and looks things up, with your scripts and the library. Jane
+  is the brain: she answers what takes knowing or judging, and reviews a job Tom sends back. Tom
+  learns from each job into a memory you can read and edit, which also holds your standing
+  instructions. The app says "standing down" before it turns off, and not while work is pending.
 - **Skills**: what the model can use besides talking, each switched on or off beside the panel:
-  your library (reading, and adding or changing notes when you ask), your default browser (search,
-  open pages, read and find text on them), files, the clipboard, the Mac's status, a calculator, and
-  your scripts.
-- **AI library**: every chat with it, by day. A new chat starts fresh, but ask about an earlier one,
-  or about something you dictated, transcribed or noted, and it looks it up.
+  your library (reading, and adding or changing notes when you ask) and your scripts and flows in
+  [Tool Mac Tool Run](https://github.com/ainigh/tool-mac-tool-run), which reach everything else on
+  the Mac (the browser and the web, files, the clipboard, the Mac itself), each run waiting for
+  your click.
+- **AI library**: every chat with it, by day, and the library beside it (two tabs, one window). A
+  new chat starts fresh, but ask about an earlier one, or about something you dictated, transcribed
+  or noted, and it looks it up. A chat shows there as it goes, what you said as soon as you said it.
 - **API**: every app on the Mac can speak and listen through it, the way they use Ollama. Each
   endpoint can be switched off from the panel, and the server stopped and started.
 
@@ -77,9 +79,10 @@ off) and turns itself off. Saying "goodbye" plays it too.
   compared: closer to theirs than to yours, it's the voice coming back through the microphone, and
   it's dropped before it's even written down; what sounds like you gets through. **Prints** in its
   window turns it off.
-- **Working sounds**: while it works, a soft sound every three seconds says what it's doing: one for
-  the model thinking (a different one for Jerry), one for the browser, one for files and the library,
-  one for the scripts. **Working** in its window turns them off (so does **Sounds**).
+- **Working sounds**: while it works, a sound every two and a half seconds says what it's doing
+  (loud enough to hear across the room, under the voices): one for Tom thinking, one for Jerry, one
+  for Jane, one for a script, one for the library. **Working** in its window turns them off (so does
+  **Sounds**).
 - **Wave**: with **Listen** on, the camera watches for a wave (a hand going left and right a few
   times; Apple's hand pose detection, about ten frames a second, nothing kept or sent anywhere): a
   wave starts it like saying "Tom", and while it talks, stops it talking. The camera's light is on
@@ -89,16 +92,25 @@ off) and turns itself off. Saying "goodbye" plays it too.
   hand-rolled (a line of JSON in the model's answer, the result as the next message), not Ollama's
   tool calling, so any model can use them.
 
-### Tom and Jerry
+### Tom, Jerry and Jane
 
 Turn the **Jerry** skill on (the panel's Skills column, or right-click the AI listen tile) and there
-are two of them in the room with you: **Tom**, the supervisor, who you talk to, and **Jerry**, the
-worker, with his own model (the same as Tom's unless you pick another, in AI Listen's window) and
-his own voice (the first of the other kind from Tom's, unless you pick one). You talk only to Tom;
-Jerry can't see or hear you, only what Tom sends him, and you hear them both.
+are three of them in the room with you, each with a model (Tom's unless you pick another) and a
+voice of their own. You talk only to Tom; the others can't see or hear you, only what Tom sends
+them, and you hear all three.
 
-- **Jobs.** With Jerry on, Tom has no tools of his own but the jobs and his memory: anything that
-  takes a tool (the web, files, the library, scripts, sums) he hands Jerry as a job, with a spec:
+- **Tom is the face.** He understands what you want, hands it on, follows it, and tells you where
+  it stands; he never answers a request himself, not even one he knows ("what are the five senses?"
+  goes to Jane). Anything to do or look up goes to Jerry; anything to know, explain, decide or write
+  goes to Jane. He answers in his own words only about the jobs: where they stand, what came back,
+  what you still need. Each thing you say reaches him with where the jobs stand now, so "how's it
+  going?" is answered from the jobs, and while one is open he starts with it. Words that promise
+  work without the call ("I'll have Jerry check") are caught, and he's told to make the call.
+- **Jane is the brain.** A question of Tom's (`ask_jane`) is a job of hers: she answers it from what
+  she knows, straight, in her voice, with no tools, and says what would settle it when she doesn't
+  know. When something goes wrong that Tom can't sort out, he asks her what to do.
+- **Jobs.** Anything that takes doing (the web, files, the library, scripts) Tom hands Jerry as a
+  job, with a spec:
   the goal, constraints (from what he knows of you), what counts as done, and what to bring back.
   You hear Tom brief it ("Jerry, job 3: …"); the spec is in the window. Jerry works it with the
   skills, saying what he's doing as he goes in his own voice, and ends it with a result, read out in
@@ -109,9 +121,9 @@ Jerry can't see or hear you, only what Tom sends him, and you hear them both.
   asks you. Jobs are kept across chats and launches (the **Jobs** list in AI Listen's window shows
   each one's status, spec, result, tools and log; **Clear finished** forgets the ones that are over);
   a job left running when the app stops is queued again next time.
-- **Approvals.** Jerry's tool calls that change something (library editing, scripts) wait for you:
-  a card in the window with **Approve** and **Reject**, and Tom's voice asks "yes or no?"; say
-  "yes", "go ahead", "no" or "reject". A rejected call comes back to Jerry as rejected, and he goes
+- **Approvals.** Jerry's tool calls that change the library, or stop a run, wait for you: a card in
+  the window with **Approve** and **Reject**, and Tom's voice asks "yes or no?"; say "yes", "go
+  ahead", "no" or "reject". A script's run waits for its own card on the Mac instead. A rejected call comes back to Jerry as rejected, and he goes
   on without it. **Approve** in the window's settings makes it everything (every tool, even looking
   things up) or nothing.
 - **Tom watches.** Tom is told of everything that happens to a job (a tool proposed, approved,
@@ -156,21 +168,23 @@ Jerry can't see or hear you, only what Tom sends him, and you hear them both.
   `stop_everything` tool, when you ask him to stop it all) stops the voices, Tom, Jerry, Jane,
   every open job, a tool waiting on you, and every run still going on the Mac.
 - **Scripts and flows run through the Mac's own card.** Jerry's `run_script`, `run_flow` and
-  `run_flow_code` ask Tool Mac Tool Run for the run and come back at once with a **request id**;
-  nothing runs until you click **Run** on the card the Mac shows (that click is the approval: the
-  app asks nothing of its own for these), and Jerry's turn needn't wait for it. The app follows the
-  request every two seconds, writes its state onto the job (waiting for your click, running, how it
-  ended; the **Jobs** list shows it), tells Jerry how it went if he's still on the job (he can ask
-  himself with `check_request`), and tells Tom whatever happens, so "is the backup done?" is
-  answered from the job, honestly, without Jerry. A job done while a run is still going stays in
-  Tom's sight until it ends, and the app won't stand down over it.
+  `run_flow_code` ask Tool Mac Tool Run for the run, and nothing runs until you click **Run** on the
+  card the Mac shows (that click is the approval: the app asks nothing of its own for these). The
+  call waits for your click and for the run, and comes back with what it printed, so Jerry reads
+  the result and finishes with it. An older Tool Mac Tool Run that answers at once with a **request
+  id** is followed by the app every two seconds instead, its state written onto the job and told to
+  Tom.
+- **What there is to run.** As AI Listen starts, the app asks Tool Mac Tool Run for its scripts and
+  flows: Jerry is told each by name with what it does (and what it can't undo), Tom what they come
+  to, so specs name scripts that exist. The panel's column lists them, with a button to ask again.
 
 ### Skills
 
-The panel's columns while AI Listen is on (or pinned with the rectangles button): the skills,
-each with a switch (the model is told only about those on), what the model used, newest first
-(click one for all of it, to copy, open or hear), and the board's searches. When the screen hasn't
-room for them all beside the panel, they scroll sideways.
+The panel's columns, always out beside it: the team (what Tom, Jerry and Jane are each doing, and
+their models), the jobs, the skills, each with a switch (the model is told only about those on),
+and the scripts Tool Mac Tool Run has; then what they used, newest first (click one for all of it,
+to copy, open or hear). When the screen hasn't room for them all beside the panel, they scroll
+sideways.
 
 - **Library**: list and read earlier chats, and the dictations, transcripts and notes ("what did we
   say about the budget last week?", "read me yesterday's dictation").
@@ -179,30 +193,13 @@ room for them all beside the panel, they scroll sideways.
   note"). Never chats, and nothing is deleted. Only a tool saves: if the model says it saved
   something when nothing did, it's told so and asked to do it, and each real save shows a line in
   AI Listen ("Saved in the library: …") and in what it used.
-- **Browser**: in your default browser: web searches (Google, or set your own),
-  your sites (Wikipedia and YouTube to start with; add one as `name https://…{query}`), opening a
-  page, reading the page you have open, and finding text on it (highlighted, scrolled to). Safari
-  and the Chromium browsers (Chrome, Brave, Edge, Arc, Vivaldi, Opera) are read in place once
-  **Allow JavaScript from Apple Events** is on (Safari: Develop menu; Chrome: View > Developer),
-  and macOS asks once to let Super Voice control the browser. Any other browser (or that off), the
-  page still opens there and is read by fetching it.
-  **Show the browser as it opens pages** (on by default) brings it to the front as it opens a page;
-  off, pages open behind, and "show me" brings it forward.
-- **This app**: "show me my library", "open my shopping note", "find the budget chat": it opens the
-  app's own windows (the library at an item or searched, the AI library, Dictate, Read aloud,
-  Transcribe, AI Listen, the panel).
-- **Files**: find files with Spotlight, list folders, read text, Markdown, code, CSV, JSON, PDF,
-  RTF and Word files. Only to look; hidden files and folders and `~/Library` (but iCloud Drive)
-  stay out, and so does anything outside your home folder, `/Applications` and `/Volumes`.
-- **Clipboard**, **This Mac** (the app in front, apps open, battery, disk, memory, macOS) and the
-  **Calculator** (sums worked out exactly, not guessed).
-- **Jerry**: the second assistant (see above): the `tell_jerry` tool, which Tom uses to hand him
-  something; it ends Tom's turn, and the message is delivered once it's been heard.
-- **Scripts**: with [Tool Mac Tool Run](https://github.com/ainigh/toolmactoolrun) running, it can
-  list and run your scripts and flows ("run my backup script"): every run shows a card on the Mac
-  and waits for you to click **Run**; the model gets a request id at once and follows it with
-  `check_request` (and, in a job, the app follows it for Tom). Its address (`http://127.0.0.1:8768`)
-  is in the window's settings; clear it and the model can't.
+- **Scripts**: with [Tool Mac Tool Run](https://github.com/ainigh/tool-mac-tool-run) running, it
+  runs your scripts and flows: that's how it reaches the browser and the web, files, the clipboard
+  and the Mac ("what page is open?", "run my backup script"). Every run shows a card on the Mac and
+  waits for you to click **Run**. Its address (`http://127.0.0.1:8768`) is in the window's settings;
+  clear it and the model can't.
+- **Jerry**: the team (see above): Tom's `delegate`, `ask_jane`, `message_jerry`, `job_status`,
+  `cancel_job` and `stop_everything`.
 - **Thinking**: off by default, for quick answers: the model is asked not to think (Ollama's
   `think: false`; "/no_think" for Qwen 3; as little as it goes for gpt-oss, which always thinks a
   bit), and anything it thinks anyway is never read out. The **Thinking** button in its window (or
@@ -254,10 +251,10 @@ left, the voice, endpoints and sharing on the right, with the switches across th
 bar under both.
 
 - **Listen**: always listen for "Tom" (see below). The hand: with Listen on, watch the camera for a
-  wave, which starts AI Listen too. The rectangles: show the skills. **Start / Stop**: serving the
-  API (the tools keep working either way).
+  wave, which starts AI Listen too. **Start / Stop**: serving the API (the tools keep working
+  either way).
 - **Read aloud, Dictate, Transcribe, Library, AI listen, AI library**: the tools, each in its own
-  window.
+  window (the library and the AI library share one, a tab each).
 - **Voice**: the default voice (click one to hear it) and speed, for the tools and for API calls
   that don't name one. Beside it, whether each model is ready.
 - **Endpoints**: a switch for each (text to speech, speech to text, transcribe files, speak on this
@@ -285,7 +282,7 @@ scripts/build-app.sh       # on a Mac: build/SuperVoice.app and build/SuperVoice
 
 | | |
 |---|---|
-| `Sources/VoiceCore` | Foundation only: the HTTP API (`API.swift`), API.md embedded (`APIDoc.swift`, generated by `scripts/embed-api-doc.sh`), HTTP parsing, voices, WAV/PCM, multipart, long-audio transcription, the library store, access rules, the assistant (`Assistant.swift`: the wake word, the Ollama client, hand-rolled tool calls, the tools over the library, the conversation; `Team.swift`: Tom and Jerry, who's addressed, the handoff; `Skills.swift`: the skills, the browser, files and the calculator; `Listening.swift`: when a sentence is done, telling its own voice from yours by the words, and what a wave is; `ToolRun.swift`: Tool Mac Tool Run's client and the tools over it) |
-| `Sources/SuperVoice` | the Mac app: FluidAudio engine, Network.framework server, menu bar panel, the tools' windows, AI listen (`AssistantModel.swift`: the room, the two agents, the voice queue and deliveries, the working sounds; `VoicePrints.swift`: the voices told from yours; `Wave.swift`: the camera), the skills board (`SkillsModel.swift`, `SkillsViews.swift`) and what they need from the Mac (`MacSkills.swift`), updater |
+| `Sources/VoiceCore` | Foundation only: the HTTP API (`API.swift`), API.md embedded (`APIDoc.swift`, generated by `scripts/embed-api-doc.sh`), HTTP parsing, voices, WAV/PCM, multipart, long-audio transcription, the library store, access rules, the assistant (`Assistant.swift`: the wake word, the Ollama client, hand-rolled tool calls, the tools over the library, the conversation; `Team.swift`: Tom, Jerry and Jane, their prompts, and catching a turn that drifts; `Skills.swift`: the skills (the library, editing, scripts, the team); `Listening.swift`: when a sentence is done, telling its own voice from yours by the words, and what a wave is; `ToolRun.swift`: Tool Mac Tool Run's client and the tools over it) |
+| `Sources/SuperVoice` | the Mac app: FluidAudio engine, Network.framework server, menu bar panel, the tools' windows, AI listen (`AssistantModel.swift`: the room, the two agents, the voice queue and deliveries, the working sounds; `VoicePrints.swift`: the voices told from yours; `Wave.swift`: the camera), and the columns beside the panel: the team, its jobs, the skills and the scripts (`SkillsModel.swift`, `SkillsViews.swift`), updater |
 | `Tests/VoiceCoreTests` | every endpoint against a fake engine, the parser, formats, the library, the assistant against a fake model |
 | `scripts/build-app.sh`, `.github/workflows/build.yml`, `install.sh` | building, releasing (pushes to `main`), installing |
