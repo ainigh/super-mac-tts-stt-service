@@ -280,8 +280,12 @@ final class AssistantTests: XCTestCase {
         let hi: [[String: Any]] = [["role": "user", "content": "hi"]]
         let quick = OllamaClient.chatBody(model: "m", messages: hi)
         XCTAssertEqual((quick["options"] as? [String: Any])?["num_predict"] as? Int, OllamaClient.quickAnswerTokens)
+        XCTAssertEqual((quick["options"] as? [String: Any])?["num_ctx"] as? Int, OllamaClient.contextTokens)
         XCTAssertEqual(quick["keep_alive"] as? String, "30m")
-        XCTAssertNil(OllamaClient.chatBody(model: "m", messages: hi, thinking: true)["options"])
+        // Thinking on: no cap on the answer, but the same room for the chat.
+        let slow = (OllamaClient.chatBody(model: "m", messages: hi, thinking: true)["options"] as? [String: Any]) ?? [:]
+        XCTAssertNil(slow["num_predict"])
+        XCTAssertEqual(slow["num_ctx"] as? Int, OllamaClient.contextTokens)
     }
 
     func testThinkingIsTakenOutOfTheAnswer() throws {

@@ -304,12 +304,17 @@ public enum AssistantTools {
     /// What the model is told when the user refused a tool it proposed.
     public static let rejectedMessage = "Rejected by the user: the tool wasn't run. Go on without it: try another way, ask Tom if you can't, or finish with what you have (say what was left undone)."
 
-    /// How the model is told to call a tool, and what the tools are.
-    public static func manual(_ tools: [Tool]) -> String {
+    /// How the model is told to call a tool, and what the tools are. `example`: a call to show, in
+    /// one of the tools it has (the library's by default; Tom with Jerry is shown delegate, Jerry a
+    /// tool and then finish), since a small model copies the shape it's shown.
+    public static func manual(_ tools: [Tool], example: String = #"{"tool": "list_chats", "arguments": {"query": "budget"}}"#, worker: Bool = false) -> String {
         guard !tools.isEmpty else { return "" }
+        let how = worker
+            ? "To use one, say in a few words what you're doing, then the call as one line of JSON on its own line, like this: "
+            : "To use one, answer with nothing but one line of JSON, like this: "
         return """
-        You have tools. To use one, answer with nothing but one line of JSON, like this: \
-        {"tool": "list_chats", "arguments": {"query": "budget"}} \
+        You have tools. \(how)\
+        \(example) \
         The result comes back as the next message, marked as a tool result (it's not the user talking), and then you \
         answer the user in words. One tool per answer; call another after if you need to. Never write that JSON unless \
         you mean to call the tool, never make up a result, and don't mention the tools or their names to the user. \
@@ -592,6 +597,25 @@ public final class Conversation {
     /// Jerry's words while he works, for the user to hear.
     public var onNarration: ((String) -> Void)?
     private var wire: [[String: Any]] = []
+    /// Said to it from outside while it's answering (Tom's word on the job Jerry is working, how a
+    /// run on the Mac went): goes on the wire before its next call to the model.
+    private var interjections: [String] = []
+    private let interjectionLock = NSLock()
+
+    /// Tells the model something while it's in the middle of answering (from any thread): it reads
+    /// it with its next call, as a note from the Mac. When it isn't answering, the same as `note`.
+    public func interject(_ text: String) {
+        interjectionLock.lock()
+        interjections.append(text)
+        interjectionLock.unlock()
+    }
+
+    /// Takes what was interjected, in order.
+    private func takeInterjections() -> [String] {
+        interjectionLock.lock()
+        defer { interjections = []; interjectionLock.unlock() }
+        return interjections
+    }
 
     /// One of the two in the team.
     public enum TeamRole: Equatable, Sendable {
@@ -777,7 +801,14 @@ public final class Conversation {
         let tools = self.tools
         if !tools.isEmpty {
             p += Skills.prompt(activeSkills.map(\.id))
-            p += "\n\n" + AssistantTools.manual(tools)
+            switch team {
+            case .lead(let teammate):
+                p += "\n\n" + AssistantTools.manual(tools, example: #"{"tool": "delegate", "arguments": {"goal": "…", "constraints": ["…"], "done_criteria": "…", "return": "…"}}"# + " (then your turn ends and \(teammate) takes it up; or, to stay quiet on an event, the word (nothing))")
+            case .member:
+                p += "\n\n" + AssistantTools.manual(tools, example: #"{"tool": "finish", "arguments": {"summary": "…", "details": "…"}}"#, worker: true)
+            case nil:
+                p += "\n\n" + AssistantTools.manual(tools)
+            }
         }
         // Last, and only the day: what comes before stays the same from one question to the next, so
         // Ollama reuses what it already read of it (the exact time is on each message).
@@ -818,7 +849,8 @@ public final class Conversation {
             wire.append(["role": "user", "content": "(Nothing new from the user: act on the events above, or answer (nothing).)"])
         } else if let from {
             turns.append(ChatTurn(role: .assistant, text: question, time: now, name: from, to: name))
-            wire.append(["role": "user", "content": Self.stamped(Team.message(question, from: from), now: now)])
+            let worker: Bool = { if case .member = team { return true } else { return false } }()
+            wire.append(["role": "user", "content": Self.stamped(Team.message(question, from: from, toWorker: worker), now: now)])
         } else {
             turns.append(ChatTurn(role: .user, text: question, time: now))
             wire.append(["role": "user", "content": Self.stamped(question, now: now)])
@@ -830,7 +862,10 @@ public final class Conversation {
             var round = 0
             // The library as the tools see it (what they change shows at once).
             var records: [LibraryRecord]?
-            var edited = false, nudged = false
+            // Each nudge (a note from the Mac asking for another go) is given once a question, so a
+            // model that doesn't take it can't be sent round in circles.
+            var edited = false, nudged = false, brokenNudged = false, stoppedNudged = false, roundsNudged = false
+            let worker: Bool = { if case .member = team { return true } else { return false } }()
             while true {
                 onActivity?(.model)
                 let reply = try await send(now: now)
@@ -842,6 +877,7 @@ public final class Conversation {
                     let aside = AssistantTools.stripped(reply)
                     if !aside.isEmpty { onNarration?(aside) }
                 }
+                var replyOnWire = false
                 if let i = ending {
                     let call = calls[i]
                     let tool = AssistantTools.canonical(call.name)
@@ -852,9 +888,13 @@ public final class Conversation {
                         action = move
                         content = AssistantTools.stripped(reply)
                         wire.append(["role": "assistant", "content": reply])
+                        // Two moves in one answer: only the first is made, and it's told so.
+                        let others = calls.enumerated().filter { $0.offset != i && terminal.contains(AssistantTools.canonical($0.element.name)) }.map { AssistantTools.canonical($0.element.name) }
+                        if !others.isEmpty { wire.append(["role": "user", "content": Team.onlyFirstMessage(tool, others: others)]) }
                     case .refuse(let why):
                         round += 1
                         wire.append(["role": "assistant", "content": reply])
+                        replyOnWire = true
                         onToolUse?(ToolUse(name: tool, arguments: call.argumentsJSON, result: why))
                         wire.append(["role": "user", "content": AssistantTools.resultMessage(call.name, why)])
                         calls.remove(at: i)
@@ -862,12 +902,37 @@ public final class Conversation {
                     }
                     if action != nil { break }
                 }
+                if calls.isEmpty, !brokenNudged, round < maxToolRounds, Team.looksLikeBrokenCall(reply) {
+                    // A call that didn't parse (cut off, or malformed): asked to write it again.
+                    brokenNudged = true
+                    round += 1
+                    wire.append(["role": "assistant", "content": reply])
+                    wire.append(["role": "user", "content": Team.brokenCallMessage])
+                    continue
+                }
                 if calls.isEmpty, !nudged, round < maxToolRounds, let teammate, Team.claimsInability(reply) {
                     // Tom says he can't, with Jerry there to do it: told so, and asked to delegate.
                     nudged = true
                     round += 1
                     wire.append(["role": "assistant", "content": reply])
                     wire.append(["role": "user", "content": Team.cannotMessage(teammate: teammate)])
+                    continue
+                }
+                if calls.isEmpty, !nudged, round < maxToolRounds, let teammate, Team.speaksToTeammate(reply, teammate: teammate) {
+                    // Tom talks to Jerry in words, which Jerry can't hear: told to call the tool.
+                    nudged = true
+                    round += 1
+                    wire.append(["role": "assistant", "content": reply])
+                    wire.append(["role": "user", "content": Team.spokeToTeammateMessage(teammate: teammate)])
+                    continue
+                }
+                if calls.isEmpty, worker, !stoppedNudged, round < maxToolRounds {
+                    // Jerry answered in words alone: no finish, no question, no tool. Told that nothing
+                    // happened, and asked for the call (once; after that his words are his result).
+                    stoppedNudged = true
+                    round += 1
+                    wire.append(["role": "assistant", "content": reply])
+                    wire.append(["role": "user", "content": Team.stoppedMessage()])
                     continue
                 }
                 if calls.isEmpty, !edited, !nudged, round < maxToolRounds,
@@ -879,12 +944,20 @@ public final class Conversation {
                     wire.append(["role": "user", "content": AssistantTools.unsavedMessage])
                     continue
                 }
+                if !calls.isEmpty, worker, !roundsNudged, round >= maxToolRounds {
+                    // Jerry has used a job's rounds and still calls tools: asked to finish (one more
+                    // go; if he calls a tool again, what he said is his result).
+                    roundsNudged = true
+                    if !replyOnWire { wire.append(["role": "assistant", "content": reply]) }
+                    wire.append(["role": "user", "content": Team.outOfRoundsMessage()])
+                    continue
+                }
                 if calls.isEmpty || round >= maxToolRounds {
                     content = calls.isEmpty ? reply : AssistantTools.stripped(reply)
                     break
                 }
                 round += 1
-                wire.append(["role": "assistant", "content": reply])
+                if !replyOnWire { wire.append(["role": "assistant", "content": reply]) }
                 if records == nil { records = library() }
                 for call in calls {
                     toolCalls.append(call.name)
@@ -1018,6 +1091,7 @@ public final class Conversation {
 
     private func send(now: Date) async throws -> String {
         guard !model.isEmpty else { throw AssistantError.noModel }
+        for text in takeInterjections() { wire.append(["role": "user", "content": "Note from the Mac (not the user): \(text)"]) }
         let messages = [["role": "system", "content": systemPrompt(now: now)]] + wire
         return try await llm.chat(model: model, messages: messages)
     }
@@ -1095,7 +1169,13 @@ public final class OllamaClient: LanguageModel {
     /// How long Ollama keeps the model loaded after a question, so the next one doesn't wait for it.
     public var keepAlive = "30m"
     /// The longest answer with thinking off, in tokens: a safety net, the prompt asks for short.
-    public static let quickAnswerTokens = 400
+    /// Room for a job's spec or a finish with its details in one line of JSON, which 400 cut off.
+    public static let quickAnswerTokens = 700
+    /// The context the model is asked for, in tokens. Ollama's default (4096, or 2048 on older
+    /// ones) doesn't hold a system prompt with the skills' manual and one page read: the oldest
+    /// messages are silently dropped, and the model loses its thread (reads the page again, forgets
+    /// the spec). 16k holds a job; any model Ollama runs takes it (it costs memory, not time).
+    public static let contextTokens = 16_384
     /// The last answer came with thinking although it was turned off (an older Ollama, or a
     /// model that can't stop): see `ThinkingAdvice`.
     public private(set) var thoughtAnyway = false
@@ -1105,7 +1185,9 @@ public final class OllamaClient: LanguageModel {
     public static func chatBody(model: String, messages: [[String: Any]], thinking: Bool = false, sendThink: Bool = true,
                                 keepAlive: String = "30m") -> [String: Any] {
         var body: [String: Any] = ["model": model, "messages": messages, "stream": false, "keep_alive": keepAlive]
-        if !thinking { body["options"] = ["num_predict": quickAnswerTokens] }
+        var options: [String: Any] = ["num_ctx": contextTokens]
+        if !thinking { options["num_predict"] = quickAnswerTokens }
+        body["options"] = options
         if sendThink { body["think"] = think(model: model, on: thinking) }
         if !thinking, noThinkTag(model), var last = messages.last, last["role"] as? String == "user",
            let content = last["content"] as? String {

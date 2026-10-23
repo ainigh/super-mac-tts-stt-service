@@ -649,9 +649,16 @@ final class AssistantModel: ObservableObject {
     }
 
     private func makeJerry() -> Agent {
+        Agent(name: Team.teammate, chat: makeJerryChat())
+    }
+
+    /// A chat for Jerry: fresh for each job (see `runJerry`).
+    private func makeJerryChat() -> Conversation {
         let c = Conversation(llm: client, model: model(for: tom!), library: { [] })
         c.name = Team.teammate
-        return Agent(name: Team.teammate, chat: c)
+        // A job takes a few more rounds than a question (search, open, read, then finish).
+        c.maxToolRounds = 10
+        return c
     }
 
     /// What the agent's chat may use: the skills that are on, scripts, editing the library, the team.
@@ -910,6 +917,12 @@ final class AssistantModel: ObservableObject {
     private func runJerry() {
         guard on, let jerry, !jerry.thinking, jerryJob == nil, reviewing == nil, let next = board.nextQueued() else { return }
         guard board.start(next.id) != nil else { return }
+        // Each job starts him fresh: the last job's tool traffic would crowd out this one's spec in
+        // a small model's context, and everything he needs of this job's past is in the briefing.
+        if !jerry.chat.isEmpty {
+            jerry.chat = makeJerryChat()
+            configure(jerry)
+        }
         jerryJob = next.id
         let messages = board.took(next.id)
         saveBoard()
@@ -1039,7 +1052,9 @@ final class AssistantModel: ObservableObject {
                     if s.state.over {
                         // Jerry, if he's still on the job, hears how it went; Tom always does.
                         if self.jerryJob == s.job, let jerry = self.jerry {
-                            jerry.tell { $0.note("The run you asked for (\(what), request \(s.request)) is over: \(s.state.text)") }
+                            // Mid-turn, it goes with his next call to the model; between turns, with the next question.
+                            let note = "The run you asked for (\(what), request \(s.request)) is over: \(s.state.text)"
+                            if jerry.thinking { jerry.chat.interject(note) } else { jerry.chat.note(note) }
                         }
                         self.play(s.state.ok == true ? "Glass" : "Basso")
                         var tell = "\(s.job): the run on the Mac (\(what)) is over: \(s.state.text)"
@@ -1119,11 +1134,24 @@ final class AssistantModel: ObservableObject {
         wakeTom("\(approval.job): the user \(approved ? "approved" : "rejected") \(approval.call.name).", always: false)
     }
 
+    /// Tom's moves refused in a row (a message to a job that can't take it): the first wakes him
+    /// to try again, the next wait for his next turn.
+    private var refusedMoves = 0
+
     /// Tom's job move, carried out: the job is made, messaged or dropped, and Tom is told how it went.
     private func tomMoved(_ action: Conversation.Action) {
         guard let tom else { return }
+        let refusedBefore = refusedMoves
+        refusedMoves = 0
         switch action {
         case .delegate(let spec):
+            if let open = board.openJob(withGoal: spec.goal) {
+                // The same job twice (he forgot, or a status check made him): he's told with his next
+                // turn (the open job's events bring one), not woken for it, which could go round.
+                tom.tell { $0.toolResult("delegate", "Not created: \(open.id) already has that goal and is \(open.status.rawValue). Wait for it (you're told when it's done), message_jerry it to add to it, or tell the user where it stands.") }
+                roomLine("Tom delegated \(open.id)'s goal again; not created")
+                return
+            }
             let job = board.delegate(spec, session: roomID, asked: turns.last { $0.role == .user }?.text)
             lastStatusAt = Date()
             saveBoard()
@@ -1145,11 +1173,22 @@ final class AssistantModel: ObservableObject {
                 let sentBack = job.status == .queued && job.revisions > 0
                 roomLine(sentBack ? "\(job.id) sent back (revision \(job.revisions))" : "\(job.id): message for Jerry")
                 talk("Jerry, about job \(job.number): \(text)", as: tom)
+                if jerryJob == job.id, let jerry, job.status == .running || job.status == .awaitingApproval {
+                    // He's on it now: it reaches him with his next call to the model (not when the
+                    // job is next taken up, which may be never).
+                    _ = board.took(job.id)
+                    saveBoard()
+                    jerry.chat.interject("Tom says, about this job: \(text)")
+                }
                 if sentBack, settings.reviewer { escalate(job) } else { runJerry() }
             } else {
-                // Refused: Tom is told why with his next turn, and takes it up now.
-                tom.wakeWanted = true
-                next(for: tom)
+                // Refused: Tom is told why with his next turn, and takes it up now (once in a row: a
+                // model that keeps making the same refused move isn't sent round and round).
+                refusedMoves = refusedBefore + 1
+                if refusedMoves < 2 {
+                    tom.wakeWanted = true
+                    next(for: tom)
+                }
             }
         case .cancel(let id):
             let r = board.cancel(id)

@@ -141,6 +141,16 @@ Jerry can't see or hear you, only what Tom sends him, and you hear them both.
   tile) opens it: read it, edit it, and give Tom and Jerry **standing instructions** of your own,
   which go after their system prompts. Tom keeps his memory with Jerry off too. Jerry keeps nothing
   between chats: each new chat starts him fresh.
+- **Keeping them on track.** The models are small, so each is told its part as numbered rules with
+  a worked example in its own tools, and the app catches the usual slips and asks once for the
+  right thing instead: Tom talking to Jerry in words (Jerry hears only tool calls), Tom saying "I
+  can't", Jerry ending a job in words without `finish` or `ask_tom`, a tool call cut off or not
+  JSON, Jerry still calling tools after a job's ten rounds (asked to finish with what he has), two
+  moves in one answer (only the first is made, and he's told), and the same goal delegated twice
+  (not created; the open job is named). What Tom says about a job Jerry is on reaches him mid-job,
+  with his next call to the model. Jerry starts each job with an empty chat (the job's past is in
+  his briefing), and every chat asks Ollama for 16k of context, so a page read doesn't push the spec
+  out of the model's sight.
 - The whole room is one chat in the AI library, with who said what to whom, and the jobs' lines.
   "Stop" stops Tom and the voices; Jerry's job carries on. **"Stop everything"** (or Tom's
   `stop_everything` tool, when you ask him to stop it all) stops the voices, Tom, Jerry, Jane,
