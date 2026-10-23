@@ -764,7 +764,12 @@ public final class Conversation {
             """
         }
         switch team {
-        case .lead(let teammate): p += Team.leadPrompt(teammate: teammate)
+        case .lead(let teammate):
+            p += Team.leadPrompt(teammate: teammate)
+            // What Jerry can do, as the skills stand (the user switches them on the board).
+            let his = Skills.all.filter { $0.id != Skills.team.id && enabled.contains($0.id) }
+                .filter { $0.id != Skills.scripts.id || runner != nil }.filter { $0.id != Skills.editing.id || save != nil }
+            if !his.isEmpty { p += " \(teammate)'s skills now: " + his.map { "\($0.title.lowercased()) (\($0.summary.lowercased()))" }.joined(separator: "; ") + "." }
         case .member(let lead): p += Team.memberPrompt(lead: lead, me: name)
         case nil: break
         }
@@ -856,6 +861,14 @@ public final class Conversation {
                         if calls.isEmpty { continue }
                     }
                     if action != nil { break }
+                }
+                if calls.isEmpty, !nudged, round < maxToolRounds, let teammate, Team.claimsInability(reply) {
+                    // Tom says he can't, with Jerry there to do it: told so, and asked to delegate.
+                    nudged = true
+                    round += 1
+                    wire.append(["role": "assistant", "content": reply])
+                    wire.append(["role": "user", "content": Team.cannotMessage(teammate: teammate)])
+                    continue
                 }
                 if calls.isEmpty, !edited, !nudged, round < maxToolRounds,
                    activeSkills.contains(where: { $0.id == Skills.editing.id }), AssistantTools.claimsLibraryChange(reply) {

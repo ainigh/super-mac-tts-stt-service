@@ -440,3 +440,44 @@ final class ReviewerTests: XCTestCase {
         XCTAssertTrue(Team.idleQuestion(minutes: "3 minutes", openJobs: "j3: Running").contains("(hold)"))
     }
 }
+
+/// Tom with Jerry never says "I can't": he delegates.
+final class DelegationTests: XCTestCase {
+    func testSayingHeCantIsCaught() {
+        XCTAssertTrue(Team.claimsInability("I don't have access to real-time weather data."))
+        XCTAssertTrue(Team.claimsInability("I can't check that for you."))
+        XCTAssertTrue(Team.claimsInability("I'm not able to browse the web."))
+        XCTAssertTrue(Team.claimsInability("I don't know, sorry."))
+        XCTAssertTrue(Team.claimsInability("As an AI, I have no way to see your files."))
+        XCTAssertFalse(Team.claimsInability("On it: I'm asking Jerry to check the weather."))
+        XCTAssertFalse(Team.claimsInability("A cat's a fine idea."))
+        XCTAssertFalse(Team.claimsInability("(nothing)"))
+    }
+
+    func testTomIsToldToDelegateWhenHeSaysHeCant() async throws {
+        let model = FakeModel()
+        let tom = Conversation(llm: model, model: "m", library: { [] })
+        tom.team = .lead(teammate: "Jerry")
+        tom.enabled = [Skills.browser.id, Skills.files.id]
+        tom.skills = SkillRunner(host: FakeMac())
+        XCTAssertTrue(tom.systemPrompt().contains("Jerry's skills now: browser"))
+        XCTAssertTrue(tom.systemPrompt().contains("Never answer \"I can't\""))
+        model.script = ["I don't have access to the weather.", #"Let me find out. {"tool": "delegate", "arguments": {"goal": "Today's weather in Lagos", "done_criteria": "the forecast, from a weather site", "return": "temperature and conditions"}}"#]
+        let r = try await tom.reply("What's the weather in Lagos?")
+        XCTAssertEqual(r.text, "Let me find out.")
+        guard case .delegate(let spec)? = r.action else { return XCTFail("no delegation") }
+        XCTAssertEqual(spec.goal, "Today's weather in Lagos")
+        XCTAssertEqual(model.sent.count, 2)
+        XCTAssertTrue(((model.sent[1].messages.last?["content"] as? String) ?? "").contains("Jerry has the tools for that"))
+        // Once a question: an honest "can't" the second time stands.
+        model.script = ["I can't know that.", "That isn't something anyone can look up."]
+        let again = try await tom.reply("What am I thinking?")
+        XCTAssertEqual(again.text, "That isn't something anyone can look up.")
+        XCTAssertEqual(model.sent.count, 4)
+        // Alone (no Jerry), nothing is said about it.
+        let alone = Conversation(llm: model, model: "m", library: { [] })
+        model.script = ["I don't have access to that."]
+        let said = try await alone.ask("Weather?")
+        XCTAssertEqual(said, "I don't have access to that.")
+    }
+}

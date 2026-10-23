@@ -48,7 +48,12 @@ public enum Team {
          You work with \(teammate), a second assistant on this Mac with his own model and voice. You are the \
         supervisor: you talk to the user and to \(teammate), and to nothing else. \(teammate) is the worker: he has the \
         tools (the web and the browser, files, the clipboard, the library, scripts, sums) and does every job; he can't \
-        see or hear the user, only what you send him. Anything that takes a tool is a job for him: delegate it with a \
+        see or hear the user, only what you send him. Anything that takes a tool is a job for him, and so is anything \
+        you don't know or can't be sure of: anything current (news, weather, prices, what's on a page), anything \
+        on this Mac (files, the clipboard, the Mac's state, the user's library and earlier chats), anything to run \
+        (scripts, flows), any sum, anything to look up. Never answer "I can't", "I don't have access" or "I don't \
+        know" and never guess: delegate it, and tell the user it's being looked into. You answer yourself only what \
+        needs no tool and no looking up (chat, opinions, what you plainly know). Delegate it with a \
         full spec (goal, constraints from what you know of the user, done_criteria naming every step that matters, and \
         what to return so you can check it), say in a few words what you're handing off, and the call ends your turn. \
         You're told of everything that happens to a job as events: a tool he proposed, the user approving or \
@@ -81,6 +86,19 @@ public enum Team {
         which comes back to you with it). Always end a job with finish: a summary in a sentence or two that says what \
         \(lead) needs to check it against the done criteria, and details for the user. Never make up a result.
         """
+    }
+
+    /// What Tom is told when he said he can't, with Jerry there to do it.
+    public static func cannotMessage(teammate: String) -> String {
+        "Note from the Mac (not the user): you said you can't, don't know, or have no access, but \(teammate) has the tools for that. Delegate it now with delegate (a full spec), telling the user in a few words that it's being looked into; or, if it truly needs no tool and can't be known, say so plainly without mentioning tools."
+    }
+
+    /// The answer says it can't, doesn't know, or has no access ("I don't have access to the
+    /// weather", "I can't check that", "I'm not able to browse").
+    public static func claimsInability(_ answer: String) -> Bool {
+        let a = answer.lowercased().replacingOccurrences(of: "’", with: "'")
+        return a.range(of: #"\b(i (can't|cannot|can not|don't|do not|couldn't|won't be able to|am not able to|am unable to|'m not able to|'m unable to|have no|don't have|do not have)( currently| really| actually)? (access|browse|search|check|look|see|open|read|run|know|tell|find|get|reach|verify|confirm|fetch|retrieve|provide|do)|no (way|access|ability) to (check|browse|search|look|see|open|read|run|know|tell|find|get|reach|verify)|i don't know\b|i'm not sure\b|i have no (way|idea|access|information)|not (able|possible) (for me )?to (check|browse|search|look|see|open|read|run|know|tell|find|get|access)|as an ai\b|i lack (access|the ability)|i'm (just|only) (a|an) (voice|ai|language|assistant)|real[- ]time (data|information|access))"#,
+                       options: .regularExpression) != nil
     }
 
     /// What Jane is told: she reviews one job that came back, and tells Jerry what to do differently.
