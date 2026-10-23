@@ -11,13 +11,21 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
         public var doneCriteria: String
         /// What to bring back (the shape of the result), so Tom can check it against done_criteria.
         public var returns: String
+        /// Who it's for: Jerry (the tools; nil means him) or Jane (a question to think through).
+        public var worker: String?
 
-        public init(goal: String, constraints: [String] = [], doneCriteria: String = "", returns: String = "") {
+        public init(goal: String, constraints: [String] = [], doneCriteria: String = "", returns: String = "", worker: String? = nil) {
             self.goal = goal
             self.constraints = constraints
             self.doneCriteria = doneCriteria
             self.returns = returns
+            self.worker = worker
         }
+
+        /// Whose it is: Jerry unless it says otherwise.
+        public var assignee: String { worker ?? Team.teammate }
+        /// It's a question for Jane, not a job for Jerry.
+        public var isQuestion: Bool { assignee == Team.reviewer }
 
         /// The spec written out, as Jerry gets it and the window shows it.
         public var text: String {
@@ -37,7 +45,7 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
             case .queued: return "Queued"
             case .running: return "Running"
             case .awaitingApproval: return "Waiting for your approval"
-            case .blocked: return "Blocked: Jerry asked"
+            case .blocked: return "Blocked: \(Team.teammate) asked"
             case .done: return "Done"
             case .failed: return "Failed"
             }
@@ -175,12 +183,16 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
     /// Its number, for ordering: 17 of "j17".
     public var number: Int { Int(id.dropFirst()) ?? 0 }
 
-    /// A line for the window and the logs: "j17 (revision 1): Done".
+    /// A line for the window and the logs: "j17 (revision 1): Done", "j18 (Jane): Done".
     public var headline: String {
         var s = id
+        if spec.isQuestion { s += " (\(Team.reviewer))" }
         if revisions > 0 { s += " (revision \(revisions))" }
         return s + ": " + status.title
     }
+
+    /// Whose it is: Jerry, or Jane.
+    public var assignee: String { spec.assignee }
 }
 
 /// The jobs, and what may happen to them. Pure: the app keeps one, calls these as things happen,
@@ -220,15 +232,37 @@ public struct JobBoard: Codable, Equatable, Sendable {
     public var open: [Job] { jobs.filter { $0.status.isOpen }.sorted { $0.number < $1.number } }
 
     /// The job Jerry is on, if any (running, or waiting for the user's approval).
-    public var current: Job? { jobs.first { $0.status == .running || $0.status == .awaitingApproval } }
+    public var current: Job? { current(for: Team.teammate) }
 
-    /// The next job for Jerry: one sent back or unblocked goes first (the user is waiting on it),
-    /// else the oldest queued. Nil while one is running (one at a time), or none is queued.
-    public func nextQueued() -> Job? {
-        guard current == nil else { return nil }
-        let queued = jobs.filter { $0.status == .queued }
+    /// The job a worker is on, if any (running, or waiting for the user's approval).
+    public func current(for worker: String) -> Job? {
+        jobs.first { $0.assignee == worker && ($0.status == .running || $0.status == .awaitingApproval) }
+    }
+
+    /// The next job for a worker (Jerry unless said): one sent back or unblocked goes first (the
+    /// user is waiting on it), else the oldest queued. Nil while one is running (one at a time),
+    /// or none is queued.
+    public func nextQueued(for worker: String = Team.teammate) -> Job? {
+        guard current(for: worker) == nil else { return nil }
+        let queued = jobs.filter { $0.status == .queued && $0.assignee == worker }
         if let again = queued.filter({ $0.revisions > 0 || !$0.inbox.isEmpty }).min(by: { $0.modified < $1.modified }) { return again }
         return queued.min { $0.number < $1.number }
+    }
+
+    /// Where the jobs stand now, in a line, as Tom gets it with each message from the user (nil
+    /// when nothing is open): "j3 (Jerry): running: today's weather; j4 (Jane): queued: the five senses".
+    public func standing(session: UUID) -> String? {
+        let open = self.open + jobs.filter { !$0.status.isOpen && $0.hasPendingRequest }.sorted { $0.number < $1.number }
+        guard !open.isEmpty else { return nil }
+        return open.map { job in
+            var s = "\(job.id) (\(job.assignee)): \(job.status.title.lowercased())"
+            if job.revisions > 0 { s += ", revision \(job.revisions)" }
+            s += ": \(job.spec.goal)"
+            if let q = job.blockedOn { s += " (he asks: \(q))" }
+            for r in job.requests where !r.over { s += " (\(r.line))" }
+            if job.session != session { s += " (from an earlier chat)" }
+            return s
+        }.joined(separator: "; ")
     }
 
     // MARK: Tom's moves
@@ -457,6 +491,12 @@ public struct JobBoard: Codable, Equatable, Sendable {
         return jobs[i].inbox
     }
 
+    /// One job, taken off its worker (stopped, or a new chat): queued again, to be taken up afresh.
+    public mutating func requeue(_ id: String, now: Date = Date()) {
+        guard let i = index(id), jobs[i].status == .running || jobs[i].status == .awaitingApproval else { return }
+        set(i, .queued, why: "queued again", now: now)
+    }
+
     /// A job left running when the app stopped is queued again at the next start (Jerry's chat is
     /// gone with the session; the record isn't).
     public mutating func recover(now: Date = Date()) {
@@ -477,7 +517,7 @@ public struct JobBoard: Codable, Equatable, Sendable {
         // Done jobs with a run still going on the Mac are still Tom's to follow.
         let open = self.open + jobs.filter { !$0.status.isOpen && $0.hasPendingRequest }.sorted { $0.number < $1.number }
         guard !open.isEmpty else { return "" }
-        var p = "\n\nOpen jobs (Jerry does one at a time, oldest first; one sent back or unblocked goes first):"
+        var p = "\n\nOpen jobs (each of them does one at a time, oldest first; one sent back or unblocked goes first):"
         for job in open {
             var line = "\n- \(job.headline)" + (job.session == session ? "" : " (from an earlier chat)") + ". \(job.spec.goal)"
             if let q = job.blockedOn { line += " Jerry asks: \(q)" }
@@ -498,6 +538,18 @@ public struct JobBoard: Codable, Equatable, Sendable {
         }
         if let r = job.result { lines.append("What you brought back before: \(r.summary)") }
         lines.append("Start now: answer with your first tool call (a short sentence, then the JSON). Work through the done criteria in order, check each against what the tools gave you, and end with finish (or ask_tom if you can't go on without an answer). Words without a tool call do nothing.")
+        return lines.joined(separator: "\n")
+    }
+
+    /// A question as Jane gets it when she takes it up: what Tom asked, and what he wants back.
+    public static func question(_ job: Job) -> String {
+        var lines = ["Question \(job.id) from Tom" + (job.revisions > 0 ? " (again, revision \(job.revisions): see his message)" : "") + ": \(job.spec.goal)"]
+        if !job.spec.constraints.isEmpty { lines.append("Keep in mind: " + job.spec.constraints.joined(separator: "; ")) }
+        if !job.spec.doneCriteria.isEmpty { lines.append("It's answered when: \(job.spec.doneCriteria)") }
+        if !job.spec.returns.isEmpty { lines.append("He wants back: \(job.spec.returns)") }
+        if !job.inbox.isEmpty { lines.append("His messages: " + job.inbox.joined(separator: " ")) }
+        if let r = job.result { lines.append("What you answered before: \(r.summary)") }
+        lines.append("Answer in words (a short paragraph at most); no tool calls.")
         return lines.joined(separator: "\n")
     }
 
@@ -550,6 +602,9 @@ public enum JobTools {
             AssistantTools.Tool(name: "delegate", description: "Hands \(teammate) a job. He has the tools (the web, files, the library, scripts, …); you don't, so anything that needs them is a job for him. Write the spec in full: he can't see or hear the user, only you. Returns the job's id. One job per call, one call per turn (it ends your turn): say first, in a few words, what you're handing off. Don't delegate what an open job already covers: message_\(t) it instead.",
                                 arguments: [("goal", "string: what to achieve, concretely"), ("constraints", "list of strings, optional: limits and preferences (from your memory too)"),
                                             ("done_criteria", "string: how to tell it's done; name every step that matters"), ("return", "string: what to bring back, enough to check done_criteria")]),
+            AssistantTools.Tool(name: "ask_\(Team.reviewer.lowercased())", description: "Hands \(Team.reviewer) a question: anything that takes knowing, explaining, judging, deciding, planning or writing (she has no tools and answers from what she knows), and what to do when a job has gone wrong. Returns the job's id; her answer comes back as its result. Calling it ends your turn: say first, in a few words, what you're asking her.",
+                                arguments: [("goal", "string: the question, in full, with what the user said"), ("constraints", "list of strings, optional: what to keep in mind (from your memory)"),
+                                            ("return", "string, optional: what to bring back, and how long")]),
             AssistantTools.Tool(name: "job_status", description: "A job's standing: status, what \(teammate) asked (if blocked), recent events, and the result once it's done.",
                                 arguments: [("job_id", "string: like j17")]),
             AssistantTools.Tool(name: "message_\(t)", description: "Says something to \(teammate) about a job: answers his question (a blocked job goes on), or sends a done job back with what to change (a revision), or adds to a running one. Calling it ends your turn.",
@@ -576,7 +631,10 @@ public enum JobTools {
     public static func aliases(teammate: String = Team.teammate, lead: String = Assistant.name) -> [String: String] {
         let t = teammate.lowercased(), l = lead.lowercased()
         return ["create_job": "delegate", "new_job": "delegate", "assign": "delegate", "assign_job": "delegate", "delegate_job": "delegate", "hand_off": "delegate",
-                "delegate_to_\(t)": "delegate", "tell_\(t)": "message_\(t)", "ask_\(t)": "message_\(t)", "reply_\(t)": "message_\(t)", "answer_\(t)": "message_\(t)",
+                "delegate_to_\(t)": "delegate", "ask_\(t)": "delegate", "tell_\(t)": "message_\(t)",
+                "\(Team.reviewer.lowercased())": "ask_\(Team.reviewer.lowercased())", "delegate_to_\(Team.reviewer.lowercased())": "ask_\(Team.reviewer.lowercased())",
+                "consult_\(Team.reviewer.lowercased())": "ask_\(Team.reviewer.lowercased())", "message_\(Team.reviewer.lowercased())": "ask_\(Team.reviewer.lowercased())",
+                "tell_\(Team.reviewer.lowercased())": "ask_\(Team.reviewer.lowercased())", "think": "ask_\(Team.reviewer.lowercased())", "reason": "ask_\(Team.reviewer.lowercased())", "reply_\(t)": "message_\(t)", "answer_\(t)": "message_\(t)",
                 "send_back": "message_\(t)", "message_job": "message_\(t)", "\(t)": "message_\(t)",
                 "get_status": "job_status", "status": "job_status", "check_job": "job_status", "job": "job_status", "get_job_status": "job_status",
                 "cancel": "cancel_job", "stop_job": "cancel_job", "drop_job": "cancel_job",
@@ -588,7 +646,7 @@ public enum JobTools {
 
     /// The spec in a delegate call's arguments (nil: no goal).
     public static func spec(_ arguments: [String: Any]) -> Job.Spec? {
-        guard let goal = ToolRunTools.string(arguments["goal"] ?? arguments["task"] ?? arguments["spec"] ?? arguments["message"] ?? arguments["job"]),
+        guard let goal = ToolRunTools.string(arguments["goal"] ?? arguments["task"] ?? arguments["question"] ?? arguments["spec"] ?? arguments["message"] ?? arguments["job"] ?? arguments["text"]),
               !goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         var constraints: [String] = []
         if let list = arguments["constraints"] as? [Any] {

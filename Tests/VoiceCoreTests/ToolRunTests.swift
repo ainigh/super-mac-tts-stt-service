@@ -144,7 +144,7 @@ final class ToolRunTests: XCTestCase {
         chat.runner = runner
         XCTAssertTrue(chat.systemPrompt().contains("- run_script:"))
         XCTAssertTrue(chat.systemPrompt().contains("Tool Mac Tool Run"))
-        XCTAssertEqual(chat.tools.map(\.name), AssistantTools.library.map(\.name) + ["calculate"] + ToolRunTools.names)
+        XCTAssertEqual(chat.tools.map(\.name), AssistantTools.library.map(\.name) + ToolRunTools.names)
         model.script = [#"{"tool": "run_script", "arguments": {"script": "hello.sh", "args": ["world"]}}"#, "It said hello to the world."]
         runner.script = [(200, ["name": "hello.sh", "state": "succeeded", "code": 0, "output": "Hello, world!\n"])]
         let answer = try await chat.ask("Run hello with world")
@@ -172,7 +172,8 @@ final class ToolRunRequestTests: XCTestCase {
         let sent = try XCTUnwrap(sent_)
         XCTAssertTrue(sent.hasPrefix("Sent. It's on the user's Mac waiting for them to click Run"))
         XCTAssertEqual(ToolRunTools.requestID(in: sent), "2A7C")
-        XCTAssertEqual(runner.sent[0].body?["async"] as? Bool, true)
+        // The call waits for the click and the run (an older Tool Mac Tool Run may still answer with a request id).
+        XCTAssertNil(runner.sent[0].body?["async"])
         XCTAssertEqual(runner.sent[0].body?["why"] as? String, "You asked for a backup")
         XCTAssertTrue(ToolRunTools.gated.contains("run_script"))
         XCTAssertFalse(ToolRunTools.gated.contains("check_request"))

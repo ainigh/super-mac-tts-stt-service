@@ -21,6 +21,12 @@ struct LibraryView: View {
     @State private var starredOnly = false
     @State private var confirmDelete: LibraryRecord?
     @FocusState private var searching: Bool
+    /// Room above it: under the window's title bar alone, or under the AI library's tabs.
+    var top: CGFloat
+
+    init(top: CGFloat = 34) {
+        self.top = top
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -44,7 +50,7 @@ struct LibraryView: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.top, 34)
+            .padding(.top, top)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             if let id = selection.id, let item = library.item(id) {
                 Divider()
@@ -93,9 +99,9 @@ struct LibraryView: View {
                 Text("\(kept) kept · dictations, transcripts and notes").font(.system(size: 12)).foregroundStyle(.secondary)
             }
             Spacer()
-            Button { Windows.show(.chats) } label: { Label("AI library", systemImage: "sparkles") }
+            Button { ChatsView.Selection.shared.tab = .chats } label: { Label("Chats", systemImage: "sparkles") }
                 .buttonStyle(PillButton(tint: Palette.violet, filled: false))
-                .help("The chats with the assistant")
+                .help("The chats with the assistant (⌘1)")
             Button { Windows.show(.dictate) } label: { Label("Dictate", systemImage: "mic.fill") }
                 .buttonStyle(PillButton(tint: Palette.pink, filled: true))
             Button { Windows.show(.transcribe) } label: { Label("Transcribe", systemImage: "waveform.badge.plus") }
@@ -282,7 +288,7 @@ private struct Detail: View {
             }
         }
         .padding(.horizontal, 18)
-        .padding(.top, 34)
+        .padding(.top, 12)
         .padding(.bottom, 18)
         .onChange(of: item.text) { _, _ in saveSoon() }
         .onChange(of: item.title) { _, _ in saveSoon() }

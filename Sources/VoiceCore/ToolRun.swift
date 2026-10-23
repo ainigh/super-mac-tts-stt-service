@@ -71,13 +71,13 @@ public enum ToolRunTools {
 
     public static let tools: [AssistantTools.Tool] = [
         AssistantTools.Tool(name: "list_scripts", description: "Lists the user's scripts in Tool Mac Tool Run (name, language, what each does, and what it looks like it does that can't be undone). Use it before running one, to find the right name."),
-        AssistantTools.Tool(name: "run_script", description: "Starts one of the user's scripts and gives back a request id at once. Nothing runs until the user clicks Run on their Mac (the Mac asks them; you can't click, so never say it ran). Use check_request with the id to see whether they clicked, and how it went.",
+        AssistantTools.Tool(name: "run_script", description: "Runs one of the user's scripts. A card on their Mac asks them first (you can't click); the call waits for their click and then for the script, and comes back with how it went and what it printed (or that they didn't click Run). If it comes back with only a request id, use check_request with it.",
                             arguments: [("script", "string: its name from list_scripts"), ("args", "list of strings, optional: its arguments"), ("stdin", "string, optional: text handed to it as input"),
                                         ("why", "string: why the user wants this, in their words; shown on the card they click")]),
         AssistantTools.Tool(name: "list_flows", description: "Lists the user's flows (scripts composed in the Flow language) in Tool Mac Tool Run."),
-        AssistantTools.Tool(name: "run_flow", description: "Starts one of the user's flows and gives back a request id at once; it runs once the user clicks Run on their Mac. Use check_request with the id to see how it goes.",
+        AssistantTools.Tool(name: "run_flow", description: "Runs one of the user's flows, once they click Run on their Mac; the call waits and comes back with how it went and what it printed.",
                             arguments: [("flow", "string: its name from list_flows"), ("args", "list of strings, optional: its arguments"), ("why", "string: why the user wants this, in their words; shown on the card")]),
-        AssistantTools.Tool(name: "run_flow_code", description: "Starts Flow code you write (it can run the user's scripts by name: run \"hello.sh\" []) and gives back a request id at once; it runs once the user clicks Run on their Mac, where the code is shown in full. Check it with check_flow first. Use check_request with the id to see how it goes.",
+        AssistantTools.Tool(name: "run_flow_code", description: "Runs Flow code you write (it can run the user's scripts by name: run \"hello.sh\" []), once the user clicks Run on their Mac, where the code is shown in full; the call waits and comes back with how it went. Check it with check_flow first.",
                             arguments: [("source", "string: the Flow code"), ("name", "string, optional: what to call the run"), ("why", "string: why the user wants this, in their words; shown on the card")]),
         AssistantTools.Tool(name: "check_request", description: "Where a run request is: waiting for the user to click Run, denied, running (with what it's printed so far), or how it ended, with what it printed. Use the request id run_script, run_flow or run_flow_code gave you.",
                             arguments: [("id", "string: the request id")]),
@@ -91,8 +91,83 @@ public enum ToolRunTools {
 
     public static var names: [String] { tools.map(\.name) }
     /// The tools that put a card on the Mac: the click there is their approval (the app asks nothing
-    /// of its own), and each gives back a request id.
+    /// of its own). The call waits for the click and the run (a request id comes back only from an
+    /// older Tool Mac Tool Run, and is then followed).
     public static let gated: Set<String> = ["run_script", "run_flow", "run_flow_code"]
+
+    /// What Tool Mac Tool Run has: the scripts and flows, fetched once as AI Listen starts (and on
+    /// request), so the models are told what there is without a round of list_scripts.
+    public struct Catalog: Equatable, Sendable {
+        public struct Script: Equatable, Sendable, Identifiable {
+            public var name: String
+            public var group: String
+            public var language: String
+            public var does: String
+            public var dangers: [String]
+            public var id: String { name }
+        }
+        public struct Flow: Equatable, Sendable, Identifiable {
+            public var name: String
+            public var does: String
+            public var id: String { name }
+        }
+        public var folder: String
+        public var scripts: [Script]
+        public var flows: [Flow]
+        public var fetched: Date
+
+        public init(folder: String = "", scripts: [Script] = [], flows: [Flow] = [], fetched: Date = Date()) {
+            self.folder = folder
+            self.scripts = scripts
+            self.flows = flows
+            self.fetched = fetched
+        }
+
+        public var isEmpty: Bool { scripts.isEmpty && flows.isEmpty }
+
+        /// Read from /api/scripts and /api/flows.
+        public static func read(scripts: [String: Any], flows: [String: Any], now: Date = Date()) -> Catalog {
+            let s = ((scripts["scripts"] as? [[String: Any]]) ?? []).compactMap { o -> Script? in
+                guard let name = o["name"] as? String, !name.isEmpty else { return nil }
+                return Script(name: name, group: (o["group"] as? String) ?? "scripts", language: (o["language_name"] as? String) ?? (o["language"] as? String) ?? "",
+                              does: (o["summary"] as? String) ?? "", dangers: (o["dangers"] as? [String]) ?? [])
+            }
+            let f = ((flows["flows"] as? [[String: Any]]) ?? []).compactMap { o -> Flow? in
+                guard let name = o["name"] as? String, !name.isEmpty else { return nil }
+                return Flow(name: name, does: (o["summary"] as? String) ?? "")
+            }
+            return Catalog(folder: (scripts["folder"] as? String) ?? "", scripts: s, flows: f, fetched: now)
+        }
+
+        /// For Jerry: every script and flow, with what it does, so he runs them by name.
+        public var prompt: String {
+            guard !isEmpty else { return "" }
+            var p = "\n\nThe scripts Tool Mac Tool Run has now (run_script by name; what each does, in its own words):"
+            for s in scripts {
+                p += "\n- \(s.name)" + (s.language.isEmpty ? "" : " (\(s.language))") + (s.does.isEmpty ? "" : ": \(s.does)")
+                if !s.dangers.isEmpty { p += " [can't be undone: \(s.dangers.joined(separator: ", "))]" }
+            }
+            if !flows.isEmpty {
+                p += "\nThe flows (run_flow by name):"
+                for f in flows { p += "\n- \(f.name)" + (f.does.isEmpty ? "" : ": \(f.does)") }
+            }
+            return p
+        }
+
+        /// For Tom: what Jerry can run, in a line, so his specs name what there is.
+        public var summary: String {
+            guard !isEmpty else { return "" }
+            let names = scripts.map { $0.does.isEmpty ? $0.name : "\($0.name) (\($0.does))" } + flows.map { $0.does.isEmpty ? $0.name : "\($0.name) (\($0.does))" }
+            return " The scripts \(Team.teammate) can run on this Mac: " + names.joined(separator: "; ") + "."
+        }
+    }
+
+    /// Fetches the catalog; nil when Tool Mac Tool Run doesn't answer (or has no folder yet).
+    public static func catalog(via runner: ScriptRunner, now: Date = Date()) async -> Catalog? {
+        guard let (status, scripts) = try? await runner.call("GET", "/api/scripts", body: nil), (200..<300).contains(status) else { return nil }
+        let flows = (try? await runner.call("GET", "/api/flows", body: nil)).flatMap { (200..<300).contains($0.status) ? $0.json : nil } ?? [:]
+        return Catalog.read(scripts: scripts, flows: flows, now: now)
+    }
 
     /// The request id in what a run tool answered ("Request id 2A7C…"), for the app to follow.
     public static func requestID(in result: String) -> String? {
@@ -174,7 +249,7 @@ public enum ToolRunTools {
                 })
             case "run_script":
                 guard let script = string(arguments["script"] ?? arguments["name"]) else { return "Say which script: its name from list_scripts." }
-                var body: [String: Any] = ["script": script, "async": true]
+                var body: [String: Any] = ["script": script]
                 if let args = list(arguments["args"] ?? arguments["arguments"]) { body["args"] = args }
                 if let stdin = string(arguments["stdin"] ?? arguments["input"]) { body["stdin"] = stdin }
                 if let why = string(arguments["why"] ?? arguments["reason"]) { body["why"] = why }
@@ -193,7 +268,7 @@ public enum ToolRunTools {
                 })
             case "run_flow":
                 guard let flow = string(arguments["flow"] ?? arguments["name"]) else { return "Say which flow: its name from list_flows." }
-                var body: [String: Any] = ["flow": flow, "async": true]
+                var body: [String: Any] = ["flow": flow]
                 if let args = list(arguments["args"] ?? arguments["arguments"]) { body["args"] = args }
                 if let why = string(arguments["why"] ?? arguments["reason"]) { body["why"] = why }
                 let (status, json) = try await runner.call("POST", "/api/compose", body: body)
@@ -201,7 +276,7 @@ public enum ToolRunTools {
                 return sent(json)
             case "run_flow_code":
                 guard let source = string(arguments["source"] ?? arguments["code"]) else { return "Give the Flow code as source." }
-                var body: [String: Any] = ["source": source, "async": true]
+                var body: [String: Any] = ["source": source]
                 if let n = string(arguments["name"]) { body["name"] = n }
                 if let why = string(arguments["why"] ?? arguments["reason"]) { body["why"] = why }
                 let (status, json) = try await runner.call("POST", "/api/compose", body: body)

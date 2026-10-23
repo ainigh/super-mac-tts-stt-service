@@ -194,8 +194,8 @@ struct AssistantView: View {
             HowToLine(symbol: "2.circle", text: "Then just talk: everything you say goes to Ollama, and the answer is read back. A pause mid-sentence doesn't cut you off\(ai.settings.bargeIn ? ", and you can talk over an answer to stop it" : "").")
             HowToLine(symbol: "3.circle", text: "“Stop” stops it talking. “New chat” starts over. “Goodbye” turns it off, and so does \(AssistantModel.clock(ai.settings.idleSeconds)) with nothing said; you hear a sound as it does.")
             HowToLine(symbol: "books.vertical", text: "Each chat is kept in the AI library. A new chat starts fresh, but ask about an earlier one, or something in your library, and it looks it up; ask, and it adds notes or changes them.")
-            HowToLine(symbol: "safari", text: "Its skills (on the panel, beside it) let it search the web and read pages in your browser, find and read files, read the clipboard, check the Mac, and do sums.")
-            HowToLine(symbol: "person.2", text: "With the \(Team.teammate) skill on, there are two of them: Tom, who you talk to, and \(Team.teammate), who does the work. Anything that takes a tool, Tom hands \(Team.teammate) as a job (you hear him brief it); \(Team.teammate) says what he's doing as he goes, in his own voice, and reports back; Tom checks the result against what he asked for and sends it back if it misses. \(Team.teammate)'s tool calls that change something wait for you: Approve or Reject, or say yes or no.")
+            HowToLine(symbol: "terminal", text: "Everything on the Mac (the browser and the web, files, the clipboard, the Mac itself) goes through your scripts in Tool Mac Tool Run: the column beside the panel lists what it has, and each run waits for you to click Run on its card.")
+            HowToLine(symbol: "person.2", text: "With the \(Team.teammate) skill on, there are three of them. Tom is the face: you talk to him, and he hands every request on and tells you where it stands. \(Team.teammate) is the engine: anything to do or look up, he does with the scripts and the library, saying what he's doing in his own voice. \(Team.reviewer) is the brain: anything to know, explain or decide, she answers. Tom checks what comes back and sends it back if it misses.")
             HowToLine(symbol: "person.3", text: "When Tom sends a job back, \(Team.reviewer), the reviewer, steps in: she reads the job alone (what you said just before, Tom's spec, what passed between Tom and \(Team.teammate)), says what's wrong with how they went about it and what \(Team.teammate) should do differently, in her own voice, and leaves. You hear her; nobody talks to her. Tom owns every job until you have what you asked for, says where things stand, and the app won't stand down over work pending: with nothing said for a while it asks Tom whether anything is still owed, and says \"standing down\" before it turns off.")
             HowToLine(symbol: "brain.head.profile", text: "Tom learns: after a job he notes what it taught him (your preferences, how to brief \(Team.teammate), what went wrong) in his memory, which he reads every turn. Open it with Memory: read it, edit it, and give Tom and \(Team.teammate) standing instructions.")
             HowToLine(symbol: "hand.wave", text: "With Listen on (the ear), a wave at the camera starts it too, and stops it talking. Soft sounds every few seconds say what it's working on.")
@@ -440,20 +440,8 @@ struct AssistantView: View {
         case "stop_run": return "stopping a run"
         case "add_note": return "adding a note"
         case "update_library": return "changing the library"
-        case "web_search": return "a web search"
-        case "search_site": return "a site search"
-        case "open_page": return "a web page"
-        case "read_page": return "the page in your browser"
-        case "find_on_page": return "finding on the page"
-        case "find_files": return "Spotlight"
-        case "list_folder": return "a folder"
-        case "read_file": return "a file"
-        case "read_clipboard": return "the clipboard"
-        case "mac_status": return "the Mac"
-        case "calculate": return "the calculator"
-        case "show_app": return "opening a window"
-        case "show_browser": return "showing the browser"
         case "delegate": return "a job for \(Team.teammate)"
+        case "ask_jane": return "a question for \(Team.reviewer)"
         case "message_jerry": return "a message to \(Team.teammate)"
         case "cancel_job": return "cancelling a job"
         case "stop_everything": return "stopping everything"
@@ -581,10 +569,20 @@ struct ChatsView: View {
         static let shared = Selection()
         @Published var id: UUID?
         @Published var query: String?
+        /// Which half shows: the chats, or the library (dictations, transcripts and notes).
+        @Published var tab: Tab = .chats
+    }
+
+    /// The window's two halves.
+    enum Tab: String, CaseIterable {
+        case chats, library
+
+        var title: String { self == .chats ? "Chats" : "Library" }
     }
 
     @EnvironmentObject var service: Service
     @EnvironmentObject var library: Library
+    @ObservedObject var pages = Selection.shared
     @ObservedObject var reader = Service.shared.reader
     @State private var query = ""
     @State private var selected: UUID?
@@ -612,6 +610,31 @@ struct ChatsView: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            tabs
+            if pages.tab == .library {
+                LibraryView(top: 12)
+            } else {
+                chatsPage
+            }
+        }
+    }
+
+    /// Chats or library: the window holds both.
+    private var tabs: some View {
+        HStack(spacing: 6) {
+            ForEach(Tab.allCases, id: \.self) { t in
+                Button(t.title) { pages.tab = t }
+                    .buttonStyle(Chip(selected: pages.tab == t, tint: t == .chats ? Palette.violet : Palette.green))
+                    .keyboardShortcut(KeyEquivalent(t == .chats ? "1" : "2"), modifiers: .command)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 32)
+    }
+
+    private var chatsPage: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 14) {
                 header
@@ -624,7 +647,7 @@ struct ChatsView: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.top, 34)
+            .padding(.top, 12)
             .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             if let id = selected, let chat = library.item(id) {
                 Divider()
@@ -674,8 +697,9 @@ struct ChatsView: View {
             Spacer()
             Button { Windows.show(.assistant) } label: { Label("AI listen", systemImage: "sparkles") }
                 .buttonStyle(PillButton(tint: Palette.violet, filled: true))
-            Button { Windows.show(.library) } label: { Label("Library", systemImage: "square.grid.2x2.fill") }
+            Button { pages.tab = .library } label: { Label("Library", systemImage: "square.grid.2x2.fill") }
                 .buttonStyle(PillButton(tint: Palette.green, filled: false))
+                .help("Your dictations, transcripts and notes (⌘2)")
         }
     }
 
@@ -851,7 +875,7 @@ private struct ChatDetail: View {
             }
         }
         .padding(.horizontal, 18)
-        .padding(.top, 34)
+        .padding(.top, 12)
         .padding(.bottom, 18)
     }
 

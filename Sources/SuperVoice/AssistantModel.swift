@@ -103,7 +103,7 @@ enum Approvals: String, Codable, CaseIterable {
 
     var help: String {
         switch self {
-        case .changes: return "Jerry asks before anything that changes something (the library, scripts); looking things up just runs"
+        case .changes: return "Jerry asks before changing the library or stopping a run (a script's run waits for its own card on the Mac); looking things up just runs"
         case .all: return "Jerry asks before every tool call, even looking things up"
         case .none: return "Jerry never asks; every tool call just runs"
         }
@@ -114,7 +114,9 @@ enum Approvals: String, Codable, CaseIterable {
         switch self {
         case .none: return false
         case .all: return true
-        case .changes: return Skills.skill(for: tool).map { !$0.readOnly } ?? false
+        // Library edits, and stopping a run (the runs themselves wait for their card on the Mac);
+        // listing scripts or checking a request only looks.
+        case .changes: return Skills.skill(for: tool)?.id == Skills.editing.id || tool == "stop_run"
         }
     }
 }
@@ -131,7 +133,8 @@ final class Agent {
     /// Counts questions, so an answer to one that was stopped is dropped.
     var generation = 0
     /// Said to it while it was still answering: asked next (from whom; nil: the user).
-    var pending: [(text: String, from: String?)] = []
+    /// The user's are shown in the room as soon as they're said (`turn`), not when they're asked.
+    var pending: [(text: String, from: String?, turn: ChatTurn?)] = []
     /// Events came for it while it was busy: a turn with nothing new said, once it's free.
     var wakeWanted = false
     /// The user's question running, and when it was asked: more said soon after, before the
@@ -203,7 +206,7 @@ final class AssistantModel: ObservableObject {
     /// What the always-listener is hearing (only "Tom" is acted on).
     @Published private(set) var wakeHearing = ""
     /// The room as it stands: you, Tom and Jerry (a question shows as soon as it's asked).
-    @Published private(set) var turns: [ChatTurn] = []
+    @Published private(set) var turns: [ChatTurn] = [] { didSet { saveSoon() } }
     /// The jobs Tom has handed Jerry (the harness's record; it persists across chats and launches).
     @Published private(set) var board: JobBoard
     /// Tom's memory: what he's learned, and the standing instructions for both.
@@ -230,6 +233,9 @@ final class AssistantModel: ObservableObject {
     /// The job Jane is reviewing (Jerry waits for her word).
     private var reviewing: String?
     private var janeGeneration = 0
+    /// The question of Tom's Jane is answering.
+    private var janeJob: String?
+    private var janeAskGeneration = 0
     /// Tom was asked whether anything is still owed before the app stands down; his answer decides.
     private var idleAsked = false
     /// "Standing down" is being said; the app stops once it's heard.
@@ -278,8 +284,12 @@ final class AssistantModel: ObservableObject {
     private var client: OllamaClient
     /// Tool Mac Tool Run, when its address is set.
     private var runner: ToolRunClient?
-    /// The skills that need the Mac.
-    private var skills: SkillRunner
+    private var runnerURL = ""
+    /// What Tool Mac Tool Run has (its scripts and flows), fetched as AI Listen starts: Jerry is
+    /// told all of it, Tom what it comes to. Nil until it answers.
+    @Published private(set) var catalog: ToolRunTools.Catalog?
+    /// Tool Mac Tool Run didn't answer the last time it was asked (why, for the column).
+    @Published private(set) var catalogProblem: String?
     private var lastActivity = Date()
     private var idleTimer: Timer?
     private var workTimer: Timer?
@@ -315,8 +325,7 @@ final class AssistantModel: ObservableObject {
         client = OllamaClient(baseURL: loaded.ollamaURL)
         client.thinking = loaded.thinking
         runner = Self.runner(for: loaded)
-        let board = SkillsModel.shared
-        skills = SkillRunner(host: MacSkills.shared, sites: board.sites, searchTemplate: board.searchTemplate)
+        runnerURL = loaded.toolRunURL
         listener.name = "AI Listen"
         wakeListener.name = "Always listen"
         listener.onUtterance = { [weak self] said in self?.heard(said) }
@@ -384,6 +393,9 @@ final class AssistantModel: ObservableObject {
     /// Jerry's model, as shown.
     var jerryModelName: String { settings.jerryModel.isEmpty ? modelName : settings.jerryModel }
 
+    /// The Scripts skill is on, with an address for Tool Mac Tool Run.
+    private var scriptsOn: Bool { runner != nil && SkillsModel.shared.enabled.contains(Skills.scripts.id) }
+
     /// The Jerry skill is on: there are two of them.
     var teamOn: Bool { SkillsModel.shared.enabled.contains(Skills.team.id) }
 
@@ -436,7 +448,31 @@ final class AssistantModel: ObservableObject {
         if called { talk(Self.calledAnswer, as: tom) }
         if let question { route(question) }
         runJerry()
+        runJane()
         followRequests()
+        refreshCatalog()
+    }
+
+    /// Asks Tool Mac Tool Run what scripts and flows it has (as AI Listen starts, when its address
+    /// changes, and from the column), so the models are told without a round of list_scripts.
+    func refreshCatalog() {
+        guard let runner else {
+            catalog = nil
+            catalogProblem = "No address for Tool Mac Tool Run (AI Listen's settings)"
+            return
+        }
+        Task.detached(priority: .utility) { [weak self] in
+            let found = await ToolRunTools.catalog(via: runner)
+            DispatchQueue.main.async {
+                guard let self, runner === self.runner else { return }
+                if let found {
+                    self.catalog = found
+                    self.catalogProblem = found.isEmpty ? "Tool Mac Tool Run has no scripts in its folder yet" : nil
+                } else {
+                    self.catalogProblem = "Tool Mac Tool Run isn't answering at \(runner.baseURL.absoluteString): is it running, with its API on?"
+                }
+            }
+        }
     }
 
     /// What Tom says when called by name with nothing after it.
@@ -627,6 +663,7 @@ final class AssistantModel: ObservableObject {
     /// Forgets this chat (it stays in the AI library) and starts another: a new session. Jerry's
     /// chat starts empty (he keeps nothing between sessions); the jobs and Tom's memory stay.
     func newChat(say announce: Bool = true) {
+        save()      // the room as it stands, before it's left (saves are otherwise deferred)
         for agent in agents { cancel(agent) }
         pendingApproval?.decide(false)
         pendingApproval = nil
@@ -664,13 +701,9 @@ final class AssistantModel: ObservableObject {
     /// What the agent's chat may use: the skills that are on, scripts, editing the library, the team.
     private func configure(_ agent: Agent) {
         let board = SkillsModel.shared
-        skills.sites = board.sites
-        skills.searchTemplate = board.searchTemplate
-        skills.showBrowser = board.showBrowser
         let name = agent.name
         for c in [agent.chat, agent.settled].compactMap({ $0 }) {
             c.runner = runner
-            c.skills = skills
             c.enabled = board.enabled
             c.quick = !settings.thinking
             var role: Conversation.TeamRole?
@@ -735,7 +768,7 @@ final class AssistantModel: ObservableObject {
     /// Asks `agent` `text`: from the user (nil), who was just heard (`fresh`: the voice stops),
     /// or from the other agent (a job for Jerry, by name). With `text` nil, a wake: nothing new is
     /// said, the agent acts on the events it was given (Tom, as a job moves).
-    private func ask(_ text: String?, of agent: Agent, from: String? = nil, fresh: Bool = true) {
+    private func ask(_ text: String?, of agent: Agent, from: String? = nil, fresh: Bool = true, shown: ChatTurn? = nil) {
         let q = text?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let q, q.isEmpty { return }
         if q != nil, from == nil, fresh { stopTalking() }
@@ -747,7 +780,16 @@ final class AssistantModel: ObservableObject {
                 ask(a.text + " " + q, of: agent, from: nil, fresh: false)
                 return
             }
-            if let q { agent.pending.append((q, from)) } else { agent.wakeWanted = true }
+            if let q {
+                // Said while it's busy: in the room now, asked once it's free.
+                var shown: ChatTurn?
+                if from == nil {
+                    let turn = ChatTurn(role: .user, text: q)
+                    turns.append(turn)
+                    shown = turn
+                }
+                agent.pending.append((q, from, shown))
+            } else { agent.wakeWanted = true }
             return
         }
         agent.catchUp()
@@ -758,9 +800,13 @@ final class AssistantModel: ObservableObject {
         let chat = agent.chat
         agent.settled = chat.copy()
         if let q, from == nil {
-            let turn = ChatTurn(role: .user, text: q)
-            agent.questionTurn = turn
-            turns.append(turn)
+            if let shown {
+                agent.questionTurn = shown
+            } else {
+                let turn = ChatTurn(role: .user, text: q)
+                agent.questionTurn = turn
+                turns.append(turn)
+            }
             play("Tink")
         } else {
             agent.questionTurn = nil
@@ -772,6 +818,9 @@ final class AssistantModel: ObservableObject {
         chat.model = model(for: agent)
         let extra = extraPrompt(for: agent)
         chat.extraPrompt = { extra }
+        // Tom gets where the jobs stand with each thing the user says (read first, before he answers).
+        let standing = agent === tom && jerry != nil ? board.standing(session: roomID) : nil
+        chat.situation = { standing }
         agent.generation += 1
         let mine = agent.generation
         refreshThinking()
@@ -819,11 +868,15 @@ final class AssistantModel: ObservableObject {
                 p += "\n\nThe user's standing instructions for you: " + memory.tomInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             p += memory.prompt()
-            if jerry != nil { p += board.prompt(session: roomID) }
+            if jerry != nil {
+                if scriptsOn { p += catalog?.summary ?? "" }
+                p += board.prompt(session: roomID)
+            }
         } else {
             if !memory.jerryInstructions.trimmingCharacters(in: .whitespaces).isEmpty {
                 p += "\n\nThe user's standing instructions for you: " + memory.jerryInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
             }
+            if scriptsOn { p += catalog?.prompt ?? "" }
             if let id = jerryJob, let job = board.job(id) {
                 p += "\n\nThe job you're on now, \(job.id)" + (job.revisions > 0 ? " (revision \(job.revisions))" : "") + ":\n" + job.spec.text
             }
@@ -867,7 +920,7 @@ final class AssistantModel: ObservableObject {
         if !agent.pending.isEmpty {
             if agent.pending[0].from == nil, voice.speaking { return }
             let p = agent.pending.removeFirst()
-            ask(p.text, of: agent, from: p.from, fresh: false)
+            ask(p.text, of: agent, from: p.from, fresh: false, shown: p.turn)
         } else if agent.wakeWanted {
             ask(nil, of: agent)
         }
@@ -881,7 +934,7 @@ final class AssistantModel: ObservableObject {
             pendingApproval?.decide(false)
             pendingApproval = nil
             if let job = board.job(id), job.status == .running || job.status == .awaitingApproval {
-                board.recover()
+                board.requeue(id)
                 saveBoard()
                 roomLine("\(id) queued again")
             }
@@ -964,13 +1017,21 @@ final class AssistantModel: ObservableObject {
         guard let job = board.finish(id, result) else { return }
         roomLine("\(id) done")
         if !spoken {
-            turns.append(ChatTurn(role: .assistant, text: result.summary, name: Team.teammate))
-            talk(result.summary, as: jerry)
+            turns.append(ChatTurn(role: .assistant, text: result.summary, name: job.assignee))
+            if job.spec.isQuestion {
+                speak(result.summary, name: Team.reviewer, voice: janeVoice)
+            } else {
+                talk(result.summary, as: jerry)
+            }
         }
         play("Glass")
-        var event = "\(id) is done" + (job.revisions > 0 ? " (revision \(job.revisions))" : "") + ". Result: \(result.summary)"
+        var event = "\(id) is done" + (job.revisions > 0 ? " (revision \(job.revisions))" : "") + ". \(job.assignee)'s answer: \(result.summary)"
         if !result.details.isEmpty { event += "\nDetails: \(result.details)" }
-        event += "\nThe spec was:\n\(job.spec.text)\nThe user heard Jerry's result read out. Check it against the spec: send it back with message_jerry if it misses, else say only what the user still needs to know (or (nothing)), and remember what this taught you."
+        if job.spec.isQuestion {
+            event += "\nYou asked \(Team.reviewer): \(job.spec.goal)\nThe user heard her answer read out. If it answers what they asked, say (nothing), or a sentence of what they still need; if it misses, or she says something must be looked up, delegate that to \(Team.teammate)."
+        } else {
+            event += "\nThe spec was:\n\(job.spec.text)\nThe user heard \(Team.teammate)'s result read out. Check it against the spec: send it back with message_jerry if it misses, else say only what the user still needs to know (or (nothing)), and remember what this taught you."
+        }
         wakeTom(event, always: true)
     }
 
@@ -997,7 +1058,7 @@ final class AssistantModel: ObservableObject {
     private func jerryUsed(_ use: ToolUse) {
         guard let id = jerryJob else { return }
         board.ran(id, use)
-        if ToolRunTools.gated.contains(use.name), let rid = ToolRunTools.requestID(in: use.result) {
+        if ToolRunTools.gated.contains(use.name), use.result.hasPrefix("Sent."), let rid = ToolRunTools.requestID(in: use.result) {
             // A card is on the Mac: the run is followed from here until it's over (Jerry's turn can end).
             let what = use.name + (use.summary.isEmpty ? "" : " " + use.summary)
             board.requested(id, Job.RunRequest(id: rid, what: what))
@@ -1155,10 +1216,14 @@ final class AssistantModel: ObservableObject {
             let job = board.delegate(spec, session: roomID, asked: turns.last { $0.role == .user }?.text)
             lastStatusAt = Date()
             saveBoard()
-            turns.append(ChatTurn(role: .assistant, text: "Job \(job.id)\n" + spec.text, name: Assistant.name, to: Team.teammate))
-            roomLine("\(job.id) queued: \(spec.goal)")
-            tom.tell { $0.toolResult("delegate", "Created \(job.id), queued for Jerry.") }
-            if jerry != nil {
+            let who = spec.assignee
+            turns.append(ChatTurn(role: .assistant, text: "Job \(job.id)\n" + spec.text, name: Assistant.name, to: who))
+            roomLine("\(job.id) queued for \(who): \(spec.goal)")
+            tom.tell { $0.toolResult(spec.isQuestion ? "ask_jane" : "delegate", "Created \(job.id), queued for \(who). You're told when it's done.") }
+            if spec.isQuestion {
+                talk("\(Team.reviewer), question \(job.number): \(spec.goal)", as: tom)
+                runJane()
+            } else if jerry != nil {
                 talk("Jerry, job \(job.number): \(spec.goal)", as: tom)
                 runJerry()
             } else {
@@ -1169,10 +1234,10 @@ final class AssistantModel: ObservableObject {
             saveBoard()
             tom.tell { $0.toolResult("message_jerry", r.result) }
             if let job = r.job {
-                turns.append(ChatTurn(role: .assistant, text: "\(job.id): \(text)", name: Assistant.name, to: Team.teammate))
+                turns.append(ChatTurn(role: .assistant, text: "\(job.id): \(text)", name: Assistant.name, to: job.assignee))
                 let sentBack = job.status == .queued && job.revisions > 0
                 roomLine(sentBack ? "\(job.id) sent back (revision \(job.revisions))" : "\(job.id): message for Jerry")
-                talk("Jerry, about job \(job.number): \(text)", as: tom)
+                talk("\(job.assignee), about job \(job.number): \(text)", as: tom)
                 if jerryJob == job.id, let jerry, job.status == .running || job.status == .awaitingApproval {
                     // He's on it now: it reaches him with his next call to the model (not when the
                     // job is next taken up, which may be never).
@@ -1180,7 +1245,7 @@ final class AssistantModel: ObservableObject {
                     saveBoard()
                     jerry.chat.interject("Tom says, about this job: \(text)")
                 }
-                if sentBack, settings.reviewer { escalate(job) } else { runJerry() }
+                if job.spec.isQuestion { runJane() } else if sentBack, settings.reviewer { escalate(job) } else { runJerry() }
             } else {
                 // Refused: Tom is told why with his next turn, and takes it up now (once in a row: a
                 // model that keeps making the same refused move isn't sent round and round).
@@ -1197,6 +1262,7 @@ final class AssistantModel: ObservableObject {
             if let job = r.job {
                 turns.append(ChatTurn(role: .assistant, text: "Cancel \(job.id).", name: Assistant.name, to: Team.teammate))
                 roomLine("\(job.id) cancelled")
+                if janeJob == job.id { dropJaneQuestion() }
                 if jerryJob == job.id, let jerry {
                     jerryJob = nil
                     pendingApproval?.decide(false)
@@ -1282,7 +1348,7 @@ final class AssistantModel: ObservableObject {
         reviewing = job.id
         janeGeneration += 1
         let mine = janeGeneration
-        janeThinking = true
+        refreshJane()
         refreshThinking()
         roomLine("Tom escalates \(job.id) to \(Team.reviewer)")
         say("\(Team.reviewer) is reviewing \(job.id)")
@@ -1298,8 +1364,8 @@ final class AssistantModel: ObservableObject {
             do { result = .success(try await chat.ask(review)) } catch { result = .failure(error) }
             DispatchQueue.main.async {
                 guard let self, mine == self.janeGeneration else { return }
-                self.janeThinking = false
                 self.reviewing = nil
+                self.refreshJane()
                 self.refreshThinking()
                 switch result {
                 case .success(let advice):
@@ -1319,11 +1385,72 @@ final class AssistantModel: ObservableObject {
         }
     }
 
-    /// Jane's review is dropped (the app stopped, or a new chat).
+    /// Jane's review is dropped (the app stopped, or a new chat), and so is a question she's on
+    /// (queued again, for the next time).
     private func dismissJane() {
         janeGeneration += 1
-        if janeThinking { janeThinking = false }
         reviewing = nil
+        dropJaneQuestion()
+        refreshJane()
+    }
+
+    /// Jane is busy: reviewing, or answering one of Tom's questions.
+    private func refreshJane() {
+        let busy = reviewing != nil || janeJob != nil
+        if janeThinking != busy { janeThinking = busy }
+    }
+
+    /// The question Jane is answering is dropped: queued again if it's still open.
+    private func dropJaneQuestion() {
+        janeAskGeneration += 1
+        if let id = janeJob {
+            janeJob = nil
+            board.requeue(id)
+            saveBoard()
+        }
+        refreshJane()
+    }
+
+    /// Jane takes up the next question of Tom's (one at a time): she has no tools, and answers
+    /// from what she knows, in her voice; her answer is the job's result, and Tom is told.
+    private func runJane() {
+        guard on, jerry != nil, janeJob == nil, let next = board.nextQueued(for: Team.reviewer), board.start(next.id) != nil else { return }
+        janeJob = next.id
+        janeAskGeneration += 1
+        let mine = janeAskGeneration
+        let briefing = JobBoard.question(next)
+        _ = board.took(next.id)
+        saveBoard()
+        refreshJane()
+        refreshThinking()
+        roomLine("\(next.id): \(Team.reviewer) is thinking it through")
+        let chat = Conversation(llm: client, model: settings.janeModel.isEmpty ? model(for: jerry ?? tom!) : settings.janeModel, library: { [] })
+        chat.name = Team.reviewer
+        chat.enabled = []
+        chat.quick = !settings.thinking
+        let instructions = memory.jerryInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        chat.extraPrompt = { " " + Team.thinkerPrompt() + (instructions.isEmpty ? "" : " The user's standing instructions for the team: \(instructions)") }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result: Result<String, Error>
+            do { result = .success(try await chat.ask(briefing)) } catch { result = .failure(error) }
+            DispatchQueue.main.async {
+                guard let self, mine == self.janeAskGeneration, let id = self.janeJob else { return }
+                self.janeJob = nil
+                self.refreshJane()
+                self.refreshThinking()
+                switch result {
+                case .success(let answer):
+                    self.finished(id, Job.Result(summary: answer.trimmingCharacters(in: .whitespacesAndNewlines)))
+                case .failure(let error):
+                    self.problem = error.localizedDescription
+                    self.board.fail(id, why: error.localizedDescription)
+                    self.roomLine("\(id) failed: \(error.localizedDescription)")
+                    self.wakeTom("\(id) failed (\(Team.reviewer) couldn't answer: \(error.localizedDescription)). Tell the user.", always: true)
+                }
+                self.saveBoard()
+                self.runJane()
+            }
+        }
     }
 
     // MARK: Status and standing down
@@ -1413,6 +1540,18 @@ final class AssistantModel: ObservableObject {
         for agent in agents { next(for: agent) }
     }
 
+    /// Saves the room once this run of changes is over (a question shows in the AI library as
+    /// soon as it's said, not when it's answered).
+    private var saveScheduled = false
+    private func saveSoon() {
+        guard !saveScheduled else { return }
+        saveScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            self?.saveScheduled = false
+            self?.save()
+        }
+    }
+
     private func save() {
         guard !turns.isEmpty else { return }
         Library.shared.save(Assistant.record(id: roomID, created: roomCreated, turns: turns, existing: Library.shared.item(roomID)))
@@ -1427,7 +1566,8 @@ final class AssistantModel: ObservableObject {
         refreshWorking()
         if t || j || janeThinking {
             if workTimer == nil {
-                workTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.tickWork() }
+                workTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in self?.tickWork() }
+                tickWork()
             }
         } else {
             workTimer?.invalidate()
@@ -1437,7 +1577,8 @@ final class AssistantModel: ObservableObject {
 
     private func refreshWorking() {
         var lines = agents.filter(\.thinking).map { "\($0.name): \(Self.describe($0.activity))" }
-        if janeThinking { lines.append("\(Team.reviewer): reviewing") }
+        if reviewing != nil { lines.append("\(Team.reviewer): reviewing") }
+        if let id = janeJob { lines.append("\(Team.reviewer): thinking (\(id))") }
         let w = lines.isEmpty ? nil : lines.joined(separator: " · ")
         if working != w { working = w }
     }
@@ -1456,12 +1597,18 @@ final class AssistantModel: ObservableObject {
     private func tickWork() {
         guard on, sounds, settings.workingSounds else { return }
         var delay = 0.0
-        for agent in agents where agent.thinking {
-            let name = Self.workSound(for: agent.activity, jerry: agent !== tom)
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { Self.play(name, volume: 0.25) }
-            delay += 0.7
+        var names = agents.filter(\.thinking).map { Self.workSound(for: $0.activity, jerry: $0 !== tom) }
+        if janeThinking { names.append(Self.janeSound) }
+        for name in names {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { Self.play(name, volume: Self.workVolume) }
+            delay += 0.6
         }
     }
+
+    /// How loud the working sounds are: heard across the room, under the voices.
+    static let workVolume: Float = 0.65
+    /// Jane thinking.
+    static let janeSound = "Frog"
 
     static func workSound(for activity: Conversation.Activity, jerry: Bool) -> String {
         switch activity {
@@ -1469,7 +1616,6 @@ final class AssistantModel: ObservableObject {
         case .approval: return "Purr"
         case .tool(let name):
             switch Skills.skill(for: name)?.id ?? "" {
-            case Skills.browser.id: return "Ping"
             case Skills.scripts.id: return "Morse"
             case Skills.editing.id: return "Glass"
             case Skills.team.id: return jerry ? "Bottle" : "Pop"
@@ -1496,7 +1642,10 @@ final class AssistantModel: ObservableObject {
             models = []
             refreshModels()
         }
+        let newRunner = s.toolRunURL != runnerURL
         runner = Self.runner(for: s)
+        runnerURL = s.toolRunURL
+        if newRunner { refreshCatalog() }
         for agent in agents {
             agent.chat.runner = runner
             agent.chat.model = model(for: agent)

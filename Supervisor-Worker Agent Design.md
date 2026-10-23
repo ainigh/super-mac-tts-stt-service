@@ -321,7 +321,17 @@ The prompts and the harness assume the models are small and drift:
 - `message_jerry` on the job Jerry is working reaches him mid-job (an interjection before his next model call), not at the next pickup.
 - Jerry's chat is fresh for each job; the job record (spec, Tom's messages, Jane's advice, tools used, the last result) is pinned in the briefing. Every request asks for a 16k context so a page read doesn't push the system prompt and spec out.
 
-## 11. Open choices
+## 11. Tom as router, Jane as the brain (as built)
+
+Small models answer what they half know instead of handing it off, say "I'll have Jerry check" and then don't, and answer "how's it going?" about themselves. So Tom's role is narrowed until it's nearly mechanical:
+
+- **Tom is the face.** He understands the user, routes every request, follows the jobs and answers only from them. He never answers a request himself: anything to do or look up is `delegate` (Jerry, the engine); anything to know, explain, decide, plan or write is `ask_jane` (Jane, the brain). Only greetings, thanks and status are his own words.
+- **Jane answers questions** as jobs of her own (`spec.worker = "Jane"`): her own queue, one at a time, beside Jerry's; no tools; her answer is the result, read out in her voice; Tom is woken on `done` like any job. She also still reviews a job Tom sends back. When something goes wrong Tom can't sort out, he asks her.
+- **Status first.** Every user message reaches Tom prefixed with the board's standing in one line ("Where the jobs stand now (from the Mac): j3 (Jerry): running: …; The user says: …"). His rule 3 says to read it first and lead with it while a job is open.
+- **Router nudge.** A user request (anything but greetings, thanks, yes/no or a status question) that Tom answers in words with no job, or any answer that promises work ("I'll have Jerry…", "let me look", "one moment") without the call, gets one note: nothing is being done; call `delegate` or `ask_jane`. A question back ("Which city?") or an answer after a memory or status tool stands.
+- **One engine.** Jerry's skills are the library and Tool Mac Tool Run, whose scripts reach the browser, files, the clipboard and the Mac. The scripts and flows are fetched as AI Listen starts and put in Jerry's prompt by name (and summarized in Tom's), so specs and calls name what exists. Runs wait for the card's click and the run (no `async`), so Jerry reads the output in the same turn.
+
+## 12. Open choices
 
 - **Tom chattiness.** With a wake on every event, Tom needs a clear rule in his prompt: speak to the user only on `done`, `failed`, `blocked`-needs-user, or when correcting course; otherwise stay silent.
 - **Approval timeouts.** Decide what happens if the user never approves: leave the job `awaiting_approval` indefinitely (simplest, and Jerry is idle anyway) or expire to `tool_rejected` after N minutes.
