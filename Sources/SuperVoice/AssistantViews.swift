@@ -249,6 +249,15 @@ struct AssistantView: View {
                         .buttonStyle(.borderless).help("Ask Ollama again which models it has")
                 }
                 HStack(spacing: 8) {
+                    Text("Pause").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
+                    ForEach([1.2, 1.8, 2.5, 3.5], id: \.self) { s in
+                        Button(String(format: s == s.rounded() ? "%.0f s" : "%.1f s", s)) { ai.change { $0.pauseSeconds = s } }
+                            .buttonStyle(Chip(selected: abs(ai.settings.pauseSeconds - s) < 0.05, tint: Palette.pink))
+                    }
+                    Text("of quiet ends what you said (longer if it sounds unfinished)").font(.system(size: 11)).foregroundStyle(.secondary)
+                        .help("It doesn't wait for you to finish? Pick a longer pause. It answers too slowly? A shorter one.")
+                }
+                HStack(spacing: 8) {
                     Text("Off after").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
                     ForEach([60.0, 180, 300, 600], id: \.self) { s in
                         Button(AssistantModel.clock(s)) { ai.change { $0.idleSeconds = s } }

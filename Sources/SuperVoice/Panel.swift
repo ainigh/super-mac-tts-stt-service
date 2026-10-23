@@ -18,6 +18,7 @@ struct PanelView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             tools
+            models
             voices
             Divider().opacity(0.5)
             endpoints
@@ -133,6 +134,48 @@ struct PanelView: View {
             ToolTile(title: "AI library", detail: chats == 0 ? "No chats yet" : counted(chats, "chat"), symbol: "bubble.left.and.text.bubble.right.fill", colors: [Palette.blue, Palette.violet]) {
                 close(); Windows.show(.chats)
             }
+        }
+    }
+
+    // MARK: Models
+
+    /// Which of Ollama's models Tom talks with, and Jerry (when he's on).
+    private var models: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                SectionTitle("Models")
+                Spacer()
+                if assistant.models.isEmpty {
+                    Text("None from Ollama yet").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Button { assistant.refreshModels() } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.borderless).help("Ask Ollama again which models it has")
+            }
+            modelRow(Assistant.name, selection: Binding(get: { assistant.settings.model }, set: { m in assistant.change { $0.model = m } }),
+                     shown: assistant.modelName, same: nil)
+            if board.isOn(Skills.team) {
+                modelRow(Team.teammate, selection: Binding(get: { assistant.settings.jerryModel }, set: { m in assistant.change { $0.jerryModel = m } }),
+                         shown: assistant.jerryModelName, same: "Same as \(Assistant.name)")
+            }
+        }
+        .onAppear { if assistant.models.isEmpty { assistant.refreshModels() } }
+    }
+
+    /// One assistant's model: a picker when Ollama has answered, else its name.
+    private func modelRow(_ who: String, selection: Binding<String>, shown: String, same: String?) -> some View {
+        HStack(spacing: 6) {
+            Text(who).font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 36, alignment: .leading)
+            if assistant.models.isEmpty {
+                Text(shown).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+            } else {
+                Picker("", selection: selection) {
+                    if let same { Text(same).tag("") }
+                    ForEach(assistant.models, id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden()
+                .controlSize(.small)
+            }
+            Spacer()
         }
     }
 

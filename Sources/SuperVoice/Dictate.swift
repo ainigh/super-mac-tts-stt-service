@@ -16,7 +16,9 @@ import VoiceCore
 final class Recorder: ObservableObject {
     static let shared = Recorder()
 
-    let pauseToEnd: Double?
+    /// How long a pause ends what was said (nil: dictating, nothing ends it). Settable while
+    /// listening: the next pause is judged by the new length.
+    private(set) var pauseToEnd: Double?
     let holdIfUnfinished: Double?
     var onUtterance: ((String) -> Void)?
     /// Whether to check each phrase before writing it down (on the main thread, as it's cut): nil,
@@ -74,6 +76,13 @@ final class Recorder: ObservableObject {
     /// Asked to listen (start) and not since stopped: the microphone opens only if still wanted
     /// once permission comes back.
     private var wanted = false
+
+    /// Changes how long a pause ends what was said (always listening only).
+    func setPause(_ seconds: Double) {
+        guard pauseToEnd != nil, seconds > 0 else { return }
+        pauseToEnd = seconds
+        cutter.pause = seconds
+    }
 
     func start() {
         wanted = true

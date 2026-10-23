@@ -42,9 +42,13 @@ everything you say goes to Ollama and the answer is read back, until three minut
 nothing said (one to ten minutes, in its window), when it plays its off sound (always, sounds on or
 off) and turns itself off. Saying "goodbye" plays it too.
 
-- **Pauses**: a pause ends what you said, unless it sounds unfinished ("…and the", "…because",
-  a trailing comma, no full stop): then it waits a moment longer for the rest. And if more comes
-  while the model is still working on the first half, the two are asked as one question.
+- **Pauses**: a pause ends what you said (about two seconds; **Pause** in its window makes it
+  shorter or longer: if it doesn't wait for you to finish, pick a longer one), unless it sounds
+  unfinished ("…and the", "…because", a trailing comma, no full stop): then it waits a moment
+  longer for the rest. And if more comes while the model is still working on the first half, the
+  two are asked as one question.
+- **Models**: the panel's **Models** row picks which of Ollama's models Tom talks with, and which
+  Jerry does (the same as Tom's unless you pick another).
 - **While it talks** it doesn't listen (so nothing you say then is taken for its own voice coming
   back and thrown away); the **Stop talking** button, a wave at the camera, or waiting for it to
   finish, and then talk. **Barge in** (off unless you turn it on, in its window) keeps it listening

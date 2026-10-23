@@ -10,6 +10,9 @@ struct AssistantSettings: Codable, Equatable {
     /// Ollama's name for it ("llama3.2:latest"); empty: the first one Ollama has.
     var model = ""
     var idleSeconds: Double = 180
+    /// How long a pause ends what you said (a pause after something that sounds unfinished waits
+    /// longer still). Longer, and it waits for you more; shorter, and it answers sooner.
+    var pauseSeconds: Double = 1.8
     /// Tool Mac Tool Run, which runs the user's scripts for the model; empty: not offered.
     var toolRunURL = ToolRunClient.defaultURL
     /// Let the model think before answering (slower). Off: turned off as far as it goes.
@@ -50,6 +53,7 @@ struct AssistantSettings: Codable, Equatable {
         ollamaURL = try c.decodeIfPresent(String.self, forKey: .ollamaURL) ?? d.ollamaURL
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? d.model
         idleSeconds = try c.decodeIfPresent(Double.self, forKey: .idleSeconds) ?? d.idleSeconds
+        pauseSeconds = try c.decodeIfPresent(Double.self, forKey: .pauseSeconds) ?? d.pauseSeconds
         toolRunURL = try c.decodeIfPresent(String.self, forKey: .toolRunURL) ?? d.toolRunURL
         thinking = try c.decodeIfPresent(Bool.self, forKey: .thinking) ?? d.thinking
         bargeIn = try c.decodeIfPresent(Bool.self, forKey: .bargeIn) ?? d.bargeIn
@@ -238,7 +242,7 @@ final class AssistantModel: ObservableObject {
     static let echo = EchoCancel()
     /// Its own voice (Tom's and Jerry's, one after the other), so stopping it stops nothing else.
     let voice = SpeechPlayer(shared: AssistantModel.echo)
-    let listener = Recorder(pauseToEnd: 1.2, holdIfUnfinished: TurnEnd.hold, shared: AssistantModel.echo)
+    let listener = Recorder(pauseToEnd: AssistantSettings().pauseSeconds, holdIfUnfinished: TurnEnd.hold, shared: AssistantModel.echo)
     /// Always listen: hears "Tom" while it's off.
     let wakeListener = Recorder(pauseToEnd: 1.0, holdIfUnfinished: TurnEnd.hold)
     /// The camera, watching for a wave while Listen is on.
@@ -282,6 +286,7 @@ final class AssistantModel: ObservableObject {
         jobs.recover()
         board = jobs
         Self.echo.wanted = loaded.echoCancel
+        listener.setPause(loaded.pauseSeconds)
         alwaysListen = defaults.bool(forKey: "alwaysListen")
         sounds = defaults.object(forKey: "assistantSounds") as? Bool ?? true
         client = OllamaClient(baseURL: loaded.ollamaURL)
@@ -1203,6 +1208,7 @@ final class AssistantModel: ObservableObject {
         }
         client.thinking = s.thinking
         Self.echo.wanted = s.echoCancel
+        listener.setPause(s.pauseSeconds)
         adviseOnThinking()
         refreshListening()
         if newModel, on { warmUp() }
