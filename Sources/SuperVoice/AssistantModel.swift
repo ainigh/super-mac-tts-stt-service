@@ -1538,6 +1538,9 @@ final class AssistantModel: ObservableObject {
                         if !self.settings.jerryModel.isEmpty, !names.contains(self.settings.jerryModel) {
                             self.change { $0.jerryModel = "" }
                         }
+                        if !self.settings.janeModel.isEmpty, !names.contains(self.settings.janeModel) {
+                            self.change { $0.janeModel = "" }
+                        }
                         if self.on { self.warmUp() }
                     }
                 case .failure(let error):

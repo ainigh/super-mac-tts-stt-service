@@ -37,7 +37,7 @@ struct SkillsColumn: View {
                 if assistant.settings.wave {
                     Hint(word: "a wave", does: assistant.alwaysListen ? "at the camera starts it" : "starts it, with Listen on")
                 }
-                Text("Talk over an answer to stop it. Off after \(AssistantModel.clock(assistant.settings.idleSeconds)) with nothing said.")
+                Text((assistant.settings.bargeIn ? "Talk over an answer to stop it. " : "") + "Off after \(AssistantModel.clock(assistant.settings.idleSeconds)) with nothing said.")
                     .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if let notice = board.notice {
