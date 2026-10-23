@@ -20,11 +20,15 @@ public enum Assistant {
         case newChat
         /// Turns the assistant off.
         case off
+        /// Stops everything: the voices, Tom, Jerry, every job and run.
+        case stopAll
     }
 
     static let commands: [([String], Command)] = [
         (["stop"], .stop), (["stop", "talking"], .stop), (["stop", "reading"], .stop), (["be", "quiet"], .stop),
         (["quiet"], .stop), (["shut", "up"], .stop), (["enough"], .stop), (["never", "mind"], .stop),
+        (["stop", "everything"], .stopAll), (["stop", "all"], .stopAll), (["stop", "it", "all"], .stopAll), (["cancel", "everything"], .stopAll),
+        (["drop", "everything"], .stopAll), (["abort"], .stopAll), (["abort", "everything"], .stopAll),
         (["new", "chat"], .newChat), (["new", "conversation"], .newChat), (["start", "over"], .newChat),
         (["start", "a", "new", "chat"], .newChat), (["forget", "that"], .newChat),
         (["goodbye"], .off), (["bye"], .off), (["that", "s", "all"], .off), (["that", "s", "it"], .off),
@@ -620,6 +624,8 @@ public final class Conversation {
         case ask(question: String)
         /// Jerry finished the job.
         case finish(Job.Result)
+        /// Tom stops everything: Jerry, every job, every run in progress.
+        case stopEverything
     }
 
     /// An answer: what to read to the user (maybe nothing), and the job move it ended with, if any.
@@ -703,7 +709,7 @@ public final class Conversation {
     /// The tools whose call ends the turn, by name, each with the job move it makes.
     var terminalTools: [String] {
         switch team {
-        case .lead(let t): return ["delegate", "message_\(t.lowercased())", "cancel_job"]
+        case .lead(let t): return ["delegate", "message_\(t.lowercased())", "cancel_job", "stop_everything"]
         case .member(let l): return ["ask_\(l.lowercased())", "finish"]
         case nil: return []
         }
@@ -723,6 +729,8 @@ public final class Conversation {
         case "cancel_job":
             guard let id = JobTools.jobID(args) else { return .refuse("Give the job_id.") }
             return .act(.cancel(job: JobBoard.normalize(id)))
+        case "stop_everything":
+            return .act(.stopEverything)
         case "finish":
             guard let result = JobTools.result(args) else { return .refuse("Give the summary: what you found or did.") }
             return .act(.finish(result))
@@ -923,6 +931,7 @@ public final class Conversation {
         case .cancel(let job): return ChatTurn(role: .assistant, text: "Cancel \(job).", name: name, to: other)
         case .ask(let question): return ChatTurn(role: .assistant, text: question, name: name, to: other)
         case .finish(let result): return ChatTurn(role: .assistant, text: result.summary, name: name)
+        case .stopEverything: return ChatTurn(role: .assistant, text: "Stop everything.", name: name, to: other)
         }
     }
 

@@ -162,3 +162,97 @@ final class ToolRunTests: XCTestCase {
         XCTAssertEqual(ToolRunError.unreachable("x").errorDescription, "Tool Mac Tool Run isn't answering at x. Is it running, with its API on?")
     }
 }
+
+/// Runs are asked for and come back at once with a request id; the app and the model follow it.
+final class ToolRunRequestTests: XCTestCase {
+    func testARunIsSentAndFollowedByItsRequestId() async throws {
+        let runner = FakeRunner()
+        runner.script = [(202, ["request": "2A7C", "state": "waiting", "url": "/api/requests/2A7C", "message": "On the Mac, waiting for Run"])]
+        let sent_ = await ToolRunTools.run("run_script", ["script": "backup.sh", "why": "You asked for a backup"], via: runner)
+        let sent = try XCTUnwrap(sent_)
+        XCTAssertTrue(sent.hasPrefix("Sent. It's on the user's Mac waiting for them to click Run"))
+        XCTAssertEqual(ToolRunTools.requestID(in: sent), "2A7C")
+        XCTAssertEqual(runner.sent[0].body?["async"] as? Bool, true)
+        XCTAssertEqual(runner.sent[0].body?["why"] as? String, "You asked for a backup")
+        XCTAssertTrue(ToolRunTools.gated.contains("run_script"))
+        XCTAssertFalse(ToolRunTools.gated.contains("check_request"))
+
+        runner.script = [(200, ["request": "2A7C", "state": "waiting"]),
+                         (200, ["request": "2A7C", "state": "running", "run_id": "6C1D", "run": ["id": "6C1D", "name": "backup.sh", "state": "running", "output": "Copying…"]]),
+                         (200, ["request": "2A7C", "state": "succeeded", "ok": true, "run_id": "6C1D", "run": ["id": "6C1D", "name": "backup.sh", "state": "succeeded", "code": 0, "seconds": 41.2, "output": "Done.\n"]]),
+                         (200, ["request": "2A7C", "state": "denied", "ok": false, "code": "denied", "error": "didn't run"]),
+                         (404, ["code": "unknown_request", "error": "no such request"])]
+        let waiting = await ToolRunTools.run("check_request", ["id": "2A7C"], via: runner)
+        XCTAssertEqual(waiting, "Still waiting for the user to click Run on their Mac.")
+        XCTAssertEqual(runner.sent.last?.path, "/api/requests/2A7C")
+        let running = await ToolRunTools.status(of: "2A7C", via: runner)
+        XCTAssertEqual(running.state, "running")
+        XCTAssertEqual(running.runID, "6C1D")
+        XCTAssertFalse(running.over)
+        XCTAssertTrue(running.text.contains("Copying…"))
+        let done = await ToolRunTools.status(of: "2A7C", via: runner)
+        XCTAssertTrue(done.over)
+        XCTAssertEqual(done.ok, true)
+        XCTAssertEqual(done.text, "backup.sh: succeeded (exit code 0), 41.2 seconds, run id 6C1D.\nIt printed:\nDone.")
+        let denied = await ToolRunTools.status(of: "2A7C", via: runner)
+        XCTAssertTrue(denied.over)
+        XCTAssertTrue(denied.text.contains("Don't Run"))
+        let gone = await ToolRunTools.status(of: "2A7C", via: runner)
+        XCTAssertTrue(gone.over)
+        XCTAssertEqual(gone.state, "unknown_request")
+        // An older Tool Mac Tool Run that ran it there and then still reads as before.
+        runner.script = [(200, ["request": "R1", "id": "6C1D", "name": "hello.sh", "state": "succeeded", "code": 0, "output": "Hi\n"])]
+        let old_ = await ToolRunTools.run("run_script", ["script": "hello.sh"], via: runner)
+        let old = try XCTUnwrap(old_)
+        XCTAssertTrue(old.hasPrefix("hello.sh: succeeded"))
+        XCTAssertEqual(ToolRunTools.requestID(in: old), "R1")
+    }
+
+    func testTheJobFollowsItsRuns() {
+        var board = JobBoard()
+        board.delegate(Job.Spec(goal: "back up"), session: UUID())
+        board.start("j1")
+        board.requested("j1", Job.RunRequest(id: "2A7C", what: "run_script backup.sh"))
+        board.requested("j1", Job.RunRequest(id: "2A7C", what: "again"))
+        XCTAssertEqual(board.job("j1")?.requests.count, 1)
+        XCTAssertEqual(board.pendingRequests.map(\.request.id), ["2A7C"])
+        XCTAssertTrue(board.job("j1")!.hasPendingRequest)
+        XCTAssertNil(board.mirror("j1", request: "2A7C", state: "waiting", runID: nil, over: false, text: ""), "nothing changed")
+        XCTAssertEqual(board.mirror("j1", request: "2A7C", state: "running", runID: "6C1D", over: false, text: "")?.kind, .toolApproved)
+        XCTAssertEqual(board.job("j1")?.requests[0].runID, "6C1D")
+        XCTAssertEqual(board.mirror("j1", request: "2A7C", state: "succeeded", runID: "6C1D", over: true, text: "Done.")?.kind, .toolResult)
+        XCTAssertEqual(board.job("j1")?.tools.last?.result, "Done.")
+        XCTAssertTrue(board.pendingRequests.isEmpty)
+        XCTAssertTrue(board.status("j1").contains("Run on the Mac: run_script backup.sh: succeeded"))
+        board.requested("j1", Job.RunRequest(id: "B", what: "run_flow x"))
+        XCTAssertEqual(board.mirror("j1", request: "B", state: "denied", runID: nil, over: true, text: "")?.kind, .toolRejected)
+        // A done job with a run still going stays in Tom's prompt.
+        board.finish("j1", Job.Result(summary: "Sent; waiting for the click."))
+        board.requested("j1", Job.RunRequest(id: "C", what: "run_script late.sh"))
+        XCTAssertTrue(board.prompt(session: UUID()).contains("j1: Done"))
+        XCTAssertTrue(board.prompt(session: UUID()).contains("Run on the Mac: run_script late.sh: waiting for the user to click Run"))
+    }
+
+    func testStopEverything() async throws {
+        var board = JobBoard()
+        board.delegate(Job.Spec(goal: "a"), session: UUID())
+        board.delegate(Job.Spec(goal: "b"), session: UUID())
+        board.start("j1")
+        board.finish("j1", Job.Result(summary: "done"))
+        XCTAssertEqual(board.cancelAll().map(\.id), ["j2"])
+        XCTAssertEqual(board.job("j2")?.status, .failed)
+        XCTAssertEqual(board.job("j1")?.status, .done)
+        XCTAssertEqual(Assistant.hear("Stop everything.", awake: true), .command(.stopAll))
+        XCTAssertEqual(Assistant.hear("Tom, cancel everything", awake: false), .command(.stopAll))
+        XCTAssertEqual(Assistant.hear("Stop.", awake: true), .command(.stop))
+        let model = FakeModel()
+        let tom = Conversation(llm: model, model: "m", library: { [] })
+        tom.team = .lead(teammate: "Jerry")
+        XCTAssertTrue(tom.tools.contains { $0.name == "stop_everything" })
+        model.script = [#"Stopping it all. {"tool": "stop_all"}"#]
+        let r = try await tom.reply("Stop everything, now.")
+        XCTAssertEqual(r.action, .stopEverything)
+        XCTAssertEqual(r.text, "Stopping it all.")
+        XCTAssertEqual(tom.turns.last?.text, "Stop everything.")
+    }
+}

@@ -142,7 +142,18 @@ Jerry can't see or hear you, only what Tom sends him, and you hear them both.
   which go after their system prompts. Tom keeps his memory with Jerry off too. Jerry keeps nothing
   between chats: each new chat starts him fresh.
 - The whole room is one chat in the AI library, with who said what to whom, and the jobs' lines.
-  "Stop" stops Tom and the voices; Jerry's job carries on.
+  "Stop" stops Tom and the voices; Jerry's job carries on. **"Stop everything"** (or Tom's
+  `stop_everything` tool, when you ask him to stop it all) stops the voices, Tom, Jerry, Jane,
+  every open job, a tool waiting on you, and every run still going on the Mac.
+- **Scripts and flows run through the Mac's own card.** Jerry's `run_script`, `run_flow` and
+  `run_flow_code` ask Tool Mac Tool Run for the run and come back at once with a **request id**;
+  nothing runs until you click **Run** on the card the Mac shows (that click is the approval: the
+  app asks nothing of its own for these), and Jerry's turn needn't wait for it. The app follows the
+  request every two seconds, writes its state onto the job (waiting for your click, running, how it
+  ended; the **Jobs** list shows it), tells Jerry how it went if he's still on the job (he can ask
+  himself with `check_request`), and tells Tom whatever happens, so "is the backup done?" is
+  answered from the job, honestly, without Jerry. A job done while a run is still going stays in
+  Tom's sight until it ends, and the app won't stand down over it.
 
 ### Skills
 
@@ -178,8 +189,9 @@ each with a switch (the model is told only about those on), what the model used,
   something; it ends Tom's turn, and the message is delivered once it's been heard.
 - **Scripts**: with [Tool Mac Tool Run](https://github.com/ainigh/toolmactoolrun) running, it can
   list and run your scripts and flows ("run my backup script"): every run shows a card on the Mac
-  and waits for you to click **Run**. Its address (`http://127.0.0.1:8768`) is in the window's
-  settings; clear it and the model can't.
+  and waits for you to click **Run**; the model gets a request id at once and follows it with
+  `check_request` (and, in a job, the app follows it for Tom). Its address (`http://127.0.0.1:8768`)
+  is in the window's settings; clear it and the model can't.
 - **Thinking**: off by default, for quick answers: the model is asked not to think (Ollama's
   `think: false`; "/no_think" for Qwen 3; as little as it goes for gpt-oss, which always thinks a
   bit), and anything it thinks anyway is never read out. The **Thinking** button in its window (or

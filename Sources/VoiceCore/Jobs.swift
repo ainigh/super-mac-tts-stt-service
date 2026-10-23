@@ -115,6 +115,8 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
     public var inbox: [String]
     /// Every tool Jerry used on it (L3), in order.
     public var tools: [ToolUse]
+    /// The runs asked of Tool Mac Tool Run for it (each a card on the Mac), followed by the app.
+    public var requests: [RunRequest] = []
     public var created: Date
     public var modified: Date
 
@@ -130,6 +132,45 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
         self.created = created
         modified = created
     }
+
+    /// A run request on the Mac (Tool Mac Tool Run), as the app follows it.
+    public struct RunRequest: Codable, Equatable, Sendable, Identifiable {
+        /// The request id Tool Mac Tool Run gave.
+        public var id: String
+        /// What was asked: "run_script hello.sh".
+        public var what: String
+        /// Its state there: waiting, running, succeeded, failed, denied, …
+        public var state: String
+        public var runID: String?
+        /// It won't change any more.
+        public var over: Bool
+        public var asked: Date
+
+        public init(id: String, what: String, state: String = "waiting", runID: String? = nil, over: Bool = false, asked: Date = Date()) {
+            self.id = id
+            self.what = what
+            self.state = state
+            self.runID = runID
+            self.over = over
+            self.asked = asked
+        }
+
+        /// For Tom and the window: "run_script hello.sh: waiting for the user to click Run".
+        public var line: String {
+            let said: String
+            switch state {
+            case "waiting": said = "waiting for the user to click Run"
+            case "running": said = "running on the Mac"
+            case "denied": said = "the user clicked Don't Run"
+            case "not_answered": said = "nobody clicked Run in time"
+            default: said = state
+            }
+            return "\(what): \(said)"
+        }
+    }
+
+    /// A run of its still going (or waiting for the click).
+    public var hasPendingRequest: Bool { requests.contains { !$0.over } }
 
     /// Its number, for ordering: 17 of "j17".
     public var number: Int { Int(id.dropFirst()) ?? 0 }
@@ -227,6 +268,17 @@ public struct JobBoard: Codable, Equatable, Sendable {
         return (note, job)
     }
 
+    /// Tom stops everything: every open job is dropped. The jobs that were open.
+    @discardableResult
+    public mutating func cancelAll(by whom: String = Assistant.name, now: Date = Date()) -> [Job] {
+        var dropped: [Job] = []
+        for i in jobs.indices where jobs[i].status.isOpen {
+            set(i, .failed, why: "stopped by \(whom)", now: now)
+            dropped.append(jobs[i])
+        }
+        return dropped
+    }
+
     /// Tom cancels a job: failed, out of the queue. What Tom is told, and the job (nil: no such job).
     public mutating func cancel(_ id: String, now: Date = Date()) -> (result: String, job: Job?) {
         guard let i = index(id) else { return ("No job called \(id). Open jobs: \(openList()).", nil) }
@@ -242,6 +294,7 @@ public struct JobBoard: Codable, Equatable, Sendable {
         var lines = ["\(job.headline)"]
         lines.append(job.spec.text)
         if let q = job.blockedOn { lines.append("Jerry asks: \(q)") }
+        for r in job.requests { lines.append("Run on the Mac: \(r.line)" + (r.over ? "" : " (the app follows it; you're told when it ends)")) }
         let recent = job.events.suffix(6).map { "- " + Self.line($0) }
         if !recent.isEmpty { lines.append("Recent events:\n" + recent.joined(separator: "\n")) }
         if let r = job.result {
@@ -347,6 +400,44 @@ public struct JobBoard: Codable, Equatable, Sendable {
         return lines.joined(separator: "\n")
     }
 
+    /// Jerry asked Tool Mac Tool Run for a run on this job: followed from here.
+    public mutating func requested(_ id: String, _ request: Job.RunRequest) {
+        guard let i = index(id), !jobs[i].requests.contains(where: { $0.id == request.id }) else { return }
+        jobs[i].requests.append(request)
+        jobs[i].modified = request.asked
+    }
+
+    /// What Tool Mac Tool Run says of a request now, mirrored onto the job: the event it makes
+    /// (tool_approved as it starts running, tool_rejected when it's denied or unanswered, tool_result
+    /// when it's over), or nil when nothing changed.
+    @discardableResult
+    public mutating func mirror(_ id: String, request rid: String, state: String, runID: String?, over: Bool, text: String, now: Date = Date()) -> Job.Event? {
+        guard let i = index(id), let r = jobs[i].requests.firstIndex(where: { $0.id == rid }) else { return nil }
+        let was = jobs[i].requests[r]
+        guard was.state != state || was.over != over else { return nil }
+        jobs[i].requests[r].state = state
+        jobs[i].requests[r].runID = runID ?? was.runID
+        jobs[i].requests[r].over = over
+        jobs[i].modified = now
+        let what = was.what
+        let event: Job.Event
+        switch state {
+        case "running": event = Job.Event(kind: .toolApproved, text: what, time: now)
+        case "denied", "not_answered": event = Job.Event(kind: .toolRejected, text: what, time: now)
+        default:
+            guard over else { return nil }
+            event = Job.Event(kind: .toolResult, text: "\(what): \(state)", time: now)
+            jobs[i].tools.append(ToolUse(name: "check_request", arguments: "{\"id\": \"\(rid)\"}", result: text, time: now))
+        }
+        jobs[i].events.append(event)
+        return event
+    }
+
+    /// Every run still going (or waiting for the click), with its job.
+    public var pendingRequests: [(job: Job, request: Job.RunRequest)] {
+        jobs.flatMap { job in job.requests.filter { !$0.over }.map { (job, $0) } }
+    }
+
     /// Jerry took the job's inbox (Tom's messages) with him: emptied.
     public mutating func took(_ id: String) -> [String] {
         guard let i = index(id) else { return [] }
@@ -371,12 +462,14 @@ public struct JobBoard: Codable, Equatable, Sendable {
 
     /// The open jobs, as Tom is told at the start of every turn ("" when there are none).
     public func prompt(session: UUID) -> String {
-        let open = self.open
+        // Done jobs with a run still going on the Mac are still Tom's to follow.
+        let open = self.open + jobs.filter { !$0.status.isOpen && $0.hasPendingRequest }.sorted { $0.number < $1.number }
         guard !open.isEmpty else { return "" }
         var p = "\n\nOpen jobs (Jerry does one at a time, oldest first; one sent back or unblocked goes first):"
         for job in open {
             var line = "\n- \(job.headline)" + (job.session == session ? "" : " (from an earlier chat)") + ". \(job.spec.goal)"
             if let q = job.blockedOn { line += " Jerry asks: \(q)" }
+            for r in job.requests where !r.over { line += " Run on the Mac: \(r.line)." }
             p += line
         }
         return p
@@ -451,6 +544,7 @@ public enum JobTools {
                                 arguments: [("job_id", "string"), ("message", "string: what to tell him, in full")]),
             AssistantTools.Tool(name: "cancel_job", description: "Stops a job: it's dropped. Calling it ends your turn.",
                                 arguments: [("job_id", "string")]),
+            AssistantTools.Tool(name: "stop_everything", description: "Stops everything at once: \(teammate) and every job (all dropped), every run still going on the Mac, and the voices. For when the user says to stop it all, or something is going wrong. Calling it ends your turn."),
         ]
     }
 
@@ -474,6 +568,8 @@ public enum JobTools {
                 "send_back": "message_\(t)", "message_job": "message_\(t)", "\(t)": "message_\(t)",
                 "get_status": "job_status", "status": "job_status", "check_job": "job_status", "job": "job_status", "get_job_status": "job_status",
                 "cancel": "cancel_job", "stop_job": "cancel_job", "drop_job": "cancel_job",
+                "stop_all": "stop_everything", "cancel_all": "stop_everything", "abort_all": "stop_everything", "stop_jobs": "stop_everything",
+                "cancel_all_jobs": "stop_everything", "halt": "stop_everything", "abort": "stop_everything", "stop": "stop_everything",
                 "question": "ask_\(l)", "ask": "ask_\(l)", "ask_lead": "ask_\(l)", "tell_\(l)": "ask_\(l)", "message_\(l)": "ask_\(l)",
                 "done": "finish", "complete": "finish", "finish_job": "finish", "report": "finish", "submit": "finish", "result": "finish", "final_answer": "finish"]
     }

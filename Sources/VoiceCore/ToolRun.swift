@@ -71,13 +71,16 @@ public enum ToolRunTools {
 
     public static let tools: [AssistantTools.Tool] = [
         AssistantTools.Tool(name: "list_scripts", description: "Lists the user's scripts in Tool Mac Tool Run (name, language, what each does, and what it looks like it does that can't be undone). Use it before running one, to find the right name."),
-        AssistantTools.Tool(name: "run_script", description: "Runs one of the user's scripts and gives back whether it succeeded and everything it printed. Nothing runs until the user clicks Run on their Mac, so tell them it's waiting for that; it may take a while.",
-                            arguments: [("script", "string: its name from list_scripts"), ("args", "list of strings, optional: its arguments"), ("stdin", "string, optional: text handed to it as input")]),
+        AssistantTools.Tool(name: "run_script", description: "Starts one of the user's scripts and gives back a request id at once. Nothing runs until the user clicks Run on their Mac (the Mac asks them; you can't click, so never say it ran). Use check_request with the id to see whether they clicked, and how it went.",
+                            arguments: [("script", "string: its name from list_scripts"), ("args", "list of strings, optional: its arguments"), ("stdin", "string, optional: text handed to it as input"),
+                                        ("why", "string: why the user wants this, in their words; shown on the card they click")]),
         AssistantTools.Tool(name: "list_flows", description: "Lists the user's flows (scripts composed in the Flow language) in Tool Mac Tool Run."),
-        AssistantTools.Tool(name: "run_flow", description: "Runs one of the user's flows, once the user clicks Run on their Mac. Gives back how it went, what it printed, and each step.",
-                            arguments: [("flow", "string: its name from list_flows"), ("args", "list of strings, optional: its arguments")]),
-        AssistantTools.Tool(name: "run_flow_code", description: "Runs Flow code you write (it can run the user's scripts by name: run \"hello.sh\" []), once the user clicks Run on their Mac, where the code is shown in full.",
-                            arguments: [("source", "string: the Flow code"), ("name", "string, optional: what to call the run")]),
+        AssistantTools.Tool(name: "run_flow", description: "Starts one of the user's flows and gives back a request id at once; it runs once the user clicks Run on their Mac. Use check_request with the id to see how it goes.",
+                            arguments: [("flow", "string: its name from list_flows"), ("args", "list of strings, optional: its arguments"), ("why", "string: why the user wants this, in their words; shown on the card")]),
+        AssistantTools.Tool(name: "run_flow_code", description: "Starts Flow code you write (it can run the user's scripts by name: run \"hello.sh\" []) and gives back a request id at once; it runs once the user clicks Run on their Mac, where the code is shown in full. Check it with check_flow first. Use check_request with the id to see how it goes.",
+                            arguments: [("source", "string: the Flow code"), ("name", "string, optional: what to call the run"), ("why", "string: why the user wants this, in their words; shown on the card")]),
+        AssistantTools.Tool(name: "check_request", description: "Where a run request is: waiting for the user to click Run, denied, running (with what it's printed so far), or how it ended, with what it printed. Use the request id run_script, run_flow or run_flow_code gave you.",
+                            arguments: [("id", "string: the request id")]),
         AssistantTools.Tool(name: "check_flow", description: "Checks Flow code for mistakes without running anything (nothing is asked of the user).",
                             arguments: [("source", "string: the Flow code")]),
         AssistantTools.Tool(name: "list_runs", description: "Lists the latest runs in Tool Mac Tool Run, newest first, without their output.",
@@ -87,6 +90,70 @@ public enum ToolRunTools {
     ]
 
     public static var names: [String] { tools.map(\.name) }
+    /// The tools that put a card on the Mac: the click there is their approval (the app asks nothing
+    /// of its own), and each gives back a request id.
+    public static let gated: Set<String> = ["run_script", "run_flow", "run_flow_code"]
+
+    /// The request id in what a run tool answered ("Request id 2A7C…"), for the app to follow.
+    public static func requestID(in result: String) -> String? {
+        guard let r = result.range(of: #"Request id ([A-Za-z0-9-]+)"#, options: .regularExpression) else { return nil }
+        return String(result[r].dropFirst("Request id ".count))
+    }
+
+    /// A run request as the app follows it: its state, the run's id once it has one, whether it's
+    /// over, and the words for it (the model's, and the user's).
+    public struct RequestState: Equatable, Sendable {
+        public var state: String
+        public var runID: String?
+        public var ok: Bool?
+        public var text: String
+        /// It won't change any more (`ok` is there, or the request is gone).
+        public var over: Bool { ok != nil || state == "gone" || state == "unknown_request" }
+    }
+
+    /// Asks Tool Mac Tool Run where a request is.
+    public static func status(of id: String, via runner: ScriptRunner) async -> RequestState {
+        do {
+            let (status, json) = try await runner.call("GET", "/api/requests/\(escaped(id))", body: nil)
+            if status == 404, (json["code"] as? String) == "unknown_request" {
+                return RequestState(state: "unknown_request", runID: nil, ok: false, text: "The request is gone: Tool Mac Tool Run started again since. Its runs (list_runs) may still show what happened.")
+            }
+            if let trouble = trouble(status, json) { return RequestState(state: "trouble", runID: nil, ok: nil, text: trouble) }
+            return requestState(json)
+        } catch {
+            return RequestState(state: "unreachable", runID: nil, ok: nil, text: (error as? LocalizedError)?.errorDescription ?? "Tool Mac Tool Run couldn't be reached.")
+        }
+    }
+
+    /// A request's answer, read for the model.
+    static func requestState(_ json: [String: Any]) -> RequestState {
+        let state = (json["state"] as? String) ?? "unknown"
+        let runID = json["run_id"] as? String ?? (json["run"] as? [String: Any])?["id"] as? String
+        let ok = json["ok"] as? Bool
+        let text: String
+        switch state {
+        case "waiting": text = "Still waiting for the user to click Run on their Mac."
+        case "denied": text = "It didn't run: the user clicked Don't Run. Don't send it again unless they ask."
+        case "not_answered": text = "It didn't run: no one clicked Run within two minutes. Ask the user before sending it again."
+        case "automated": text = "Allowed: it's tagged to run by itself now."
+        case "gone": text = "It ran, but the run has been cleared from Tool Mac Tool Run's history, so its output is gone."
+        default:
+            if let run = json["run"] as? [String: Any] { text = outcome(run) }
+            else { text = "\(state): \((json["error"] as? String) ?? "")" }
+        }
+        return RequestState(state: state, runID: runID, ok: ok, text: text)
+    }
+
+    /// What a run tool answered: the request id to follow, or (an older Tool Mac Tool Run that ran
+    /// it there and then) how it went.
+    static func sent(_ json: [String: Any]) -> String {
+        if let id = json["request"] as? String, (json["state"] as? String) == "waiting" || json["run"] == nil && json["output"] == nil {
+            return "Sent. It's on the user's Mac waiting for them to click Run; nothing has run yet. Request id \(id): use check_request with it to see whether they clicked, and how it went."
+        }
+        var text = outcome(json)
+        if let id = json["request"] as? String { text += "\nRequest id \(id)." }
+        return text
+    }
 
     /// Runs one of these tools; nil when `name` isn't one of them. The answer is text for the model.
     public static func run(_ name: String, _ arguments: [String: Any], via runner: ScriptRunner) async -> String? {
@@ -107,12 +174,13 @@ public enum ToolRunTools {
                 })
             case "run_script":
                 guard let script = string(arguments["script"] ?? arguments["name"]) else { return "Say which script: its name from list_scripts." }
-                var body: [String: Any] = ["script": script]
+                var body: [String: Any] = ["script": script, "async": true]
                 if let args = list(arguments["args"] ?? arguments["arguments"]) { body["args"] = args }
                 if let stdin = string(arguments["stdin"] ?? arguments["input"]) { body["stdin"] = stdin }
+                if let why = string(arguments["why"] ?? arguments["reason"]) { body["why"] = why }
                 let (status, json) = try await runner.call("POST", "/api/run", body: body)
                 if let trouble = trouble(status, json) { return trouble }
-                return outcome(json)
+                return sent(json)
             case "list_flows":
                 let (status, json) = try await runner.call("GET", "/api/flows", body: nil)
                 if let trouble = trouble(status, json) { return trouble }
@@ -125,18 +193,23 @@ public enum ToolRunTools {
                 })
             case "run_flow":
                 guard let flow = string(arguments["flow"] ?? arguments["name"]) else { return "Say which flow: its name from list_flows." }
-                var body: [String: Any] = ["flow": flow]
+                var body: [String: Any] = ["flow": flow, "async": true]
                 if let args = list(arguments["args"] ?? arguments["arguments"]) { body["args"] = args }
+                if let why = string(arguments["why"] ?? arguments["reason"]) { body["why"] = why }
                 let (status, json) = try await runner.call("POST", "/api/compose", body: body)
                 if let trouble = trouble(status, json) { return trouble }
-                return outcome(json)
+                return sent(json)
             case "run_flow_code":
                 guard let source = string(arguments["source"] ?? arguments["code"]) else { return "Give the Flow code as source." }
-                var body: [String: Any] = ["source": source]
+                var body: [String: Any] = ["source": source, "async": true]
                 if let n = string(arguments["name"]) { body["name"] = n }
+                if let why = string(arguments["why"] ?? arguments["reason"]) { body["why"] = why }
                 let (status, json) = try await runner.call("POST", "/api/compose", body: body)
                 if let trouble = trouble(status, json) { return trouble }
-                return outcome(json)
+                return sent(json)
+            case "check_request":
+                guard let id = string(arguments["id"] ?? arguments["request"] ?? arguments["request_id"]) else { return "Give the request id." }
+                return await status(of: id, via: runner).text
             case "check_flow":
                 guard let source = string(arguments["source"] ?? arguments["code"]) else { return "Give the Flow code as source." }
                 let (status, json) = try await runner.call("POST", "/api/check", body: ["source": source])
@@ -218,7 +291,7 @@ public enum ToolRunTools {
         case "not_answered": return "It didn't run: no one clicked Run on the Mac within two minutes."
         case "endpoint_off": return "That's turned off in Tool Mac Tool Run on this Mac (\(error))."
         case "no_folder": return "Tool Mac Tool Run has no scripts folder chosen yet; the user picks one in its panel."
-        case "unknown_script", "unknown_flow", "unknown_run": return error
+        case "unknown_script", "unknown_flow", "unknown_run", "unknown_request": return error
         case "flow_mistake": return mistake(json)
         default: return "Tool Mac Tool Run said \(status): \(error)"
         }

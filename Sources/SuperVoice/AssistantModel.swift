@@ -283,6 +283,9 @@ final class AssistantModel: ObservableObject {
     private var lastActivity = Date()
     private var idleTimer: Timer?
     private var workTimer: Timer?
+    /// Asks Tool Mac Tool Run where the runs still going are, every couple of seconds while there are any.
+    private var requestTimer: Timer?
+    private var polling = false
     private var watching: Set<AnyCancellable> = []
     /// What's queued to be said, by its number in the voice: who says it, and what to do if the
     /// user cuts in before it's heard (a message that then isn't delivered).
@@ -431,6 +434,7 @@ final class AssistantModel: ObservableObject {
         say(teamOn ? "Listening: just talk (Jerry's here too)" : "Listening: just talk")
         if let question { route(question) }
         runJerry()
+        followRequests()
     }
 
     /// Stops, with its off sound first: the microphone closes and the voice stops. The chat stays
@@ -594,6 +598,9 @@ final class AssistantModel: ObservableObject {
         case .off:
             stop(reason: "Turned off")
             talk("Bye.", as: nil)
+        case .stopAll:
+            stopEverything(by: "the user")
+            talk("Stopped everything.", as: nil)
         }
     }
 
@@ -666,7 +673,8 @@ final class AssistantModel: ObservableObject {
             } else {
                 c.extraTools = []
                 c.custom = nil
-                c.needsApproval = { [weak self] tool in self?.settings.approvals.requires(tool) ?? false }
+                // Tool Mac Tool Run's runs put a card on the Mac: that click is their approval (not two clicks for one run).
+                c.needsApproval = { [weak self] tool in !ToolRunTools.gated.contains(tool) && (self?.settings.approvals.requires(tool) ?? false) }
                 c.approval = { [weak self] call in await self?.approve(call) ?? false }
                 c.onNarration = { [weak self] text in DispatchQueue.main.async { self?.narrated(text) } }
             }
@@ -969,8 +977,105 @@ final class AssistantModel: ObservableObject {
     private func jerryUsed(_ use: ToolUse) {
         guard let id = jerryJob else { return }
         board.ran(id, use)
+        if ToolRunTools.gated.contains(use.name), let rid = ToolRunTools.requestID(in: use.result) {
+            // A card is on the Mac: the run is followed from here until it's over (Jerry's turn can end).
+            let what = use.name + (use.summary.isEmpty ? "" : " " + use.summary)
+            board.requested(id, Job.RunRequest(id: rid, what: what))
+            roomLine("\(id): \(what): waiting for you to click Run on the Mac")
+            followRequests()
+        }
         saveBoard()
         if use.result != AssistantTools.rejectedMessage { wakeTom("\(id): Jerry ran \(use.name)" + (use.summary.isEmpty ? "" : " (\(use.summary))"), always: false) }
+    }
+
+    /// Follows the runs asked of Tool Mac Tool Run, every two seconds while any is going: their
+    /// state goes onto their jobs (the harness writes it, never a model), Jerry is told when one
+    /// ends if he's still on the job, and Tom is told whatever happens.
+    private func followRequests() {
+        guard !board.pendingRequests.isEmpty else {
+            requestTimer?.invalidate()
+            requestTimer = nil
+            return
+        }
+        guard requestTimer == nil else { return }
+        requestTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.pollRequests() }
+    }
+
+    private func pollRequests() {
+        guard !polling else { return }
+        guard let runner else {
+            requestTimer?.invalidate()
+            requestTimer = nil
+            return
+        }
+        let pending = board.pendingRequests
+        guard !pending.isEmpty else { return followRequests() }
+        polling = true
+        Task.detached(priority: .utility) { [weak self] in
+            var states: [(job: String, request: String, state: ToolRunTools.RequestState)] = []
+            for p in pending {
+                let state = await ToolRunTools.status(of: p.request.id, via: runner)
+                states.append((p.job.id, p.request.id, state))
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.polling = false
+                for s in states where s.state.state != "trouble" && s.state.state != "unreachable" {
+                    guard let event = self.board.mirror(s.job, request: s.request, state: s.state.state, runID: s.state.runID, over: s.state.over, text: s.state.text) else { continue }
+                    let job = self.board.job(s.job)
+                    let what = job?.requests.first { $0.id == s.request }?.what ?? s.request
+                    switch event.kind {
+                    case .toolApproved: self.roomLine("\(s.job): \(what): you clicked Run; it's running")
+                    case .toolRejected: self.roomLine("\(s.job): \(what): \(s.state.state == "denied" ? "you clicked Don't Run" : "nobody clicked Run in time")")
+                    default: self.roomLine("\(s.job): \(what): \(s.state.state)")
+                    }
+                    if s.state.over {
+                        // Jerry, if he's still on the job, hears how it went; Tom always does.
+                        if self.jerryJob == s.job, let jerry = self.jerry {
+                            jerry.tell { $0.note("The run you asked for (\(what), request \(s.request)) is over: \(s.state.text)") }
+                        }
+                        self.play(s.state.ok == true ? "Glass" : "Basso")
+                        var tell = "\(s.job): the run on the Mac (\(what)) is over: \(s.state.text)"
+                        if let job, !job.status.isOpen { tell += "\nThe job was already \(job.status.rawValue): tell the user how the run went (or send the job back with message_jerry if the result misses the spec)." }
+                        self.wakeTom(tell, always: true)
+                    } else if event.kind == .toolApproved || event.kind == .toolRejected {
+                        self.wakeTom("\(s.job): \(what): \(s.state.text)", always: false)
+                    }
+                }
+                self.saveBoard()
+                self.followRequests()
+            }
+        }
+    }
+
+    /// Everything stops: the voices, Tom's turn, Jerry and his job, Jane, every open job, a tool
+    /// waiting on the user, and every run still going on the Mac. What Tom is told.
+    @discardableResult
+    func stopEverything(by whom: String) -> String {
+        stopTalking()
+        pendingApproval?.decide(false)
+        pendingApproval = nil
+        dismissJane()
+        let dropped = board.cancelAll(by: whom)
+        jerryJob = nil
+        if let jerry { cancel(jerry) }
+        if whom != Assistant.name, let tom, tom.thinking { cancel(tom) }
+        // Runs still going on the Mac are stopped there (those with a run yet; one still waiting
+        // for the click can only be declined there).
+        let running = board.pendingRequests.filter { $0.request.runID != nil }
+        if let runner, !running.isEmpty {
+            let ids = running.compactMap(\.request.runID)
+            Task.detached { for id in ids { _ = await ToolRunTools.run("stop_run", ["id": id], via: runner) } }
+        }
+        saveBoard()
+        refreshThinking()
+        var said = "Stopped everything"
+        if !dropped.isEmpty { said += ": " + dropped.map(\.id).joined(separator: ", ") + " dropped" }
+        if !running.isEmpty { said += "; \(running.count) run\(running.count == 1 ? "" : "s") on the Mac told to stop" }
+        roomLine(said + (whom == Assistant.name ? "" : " (by \(whom))"))
+        say(said)
+        play("Basso")
+        return said + "."
     }
 
     /// Jerry proposed a tool call that needs the user: it waits here until they approve or reject
@@ -1055,6 +1160,9 @@ final class AssistantModel: ObservableObject {
                     runJerry()
                 }
             }
+        case .stopEverything:
+            let said = stopEverything(by: Assistant.name)
+            tom.tell { $0.toolResult("stop_everything", said) }
         case .ask, .finish:
             break
         }
@@ -1178,14 +1286,14 @@ final class AssistantModel: ObservableObject {
     /// or about to take up.
     private var workPending: Bool {
         board.open.contains { $0.session == roomID || $0.status == .queued || $0.status == .running || $0.status == .awaitingApproval }
-            || pendingApproval != nil || janeThinking || jerryThinking
+            || !board.pendingRequests.isEmpty || pendingApproval != nil || janeThinking || jerryThinking
     }
 
     /// Every so often while jobs are open, Tom is asked to say where things stand, if the user
     /// hasn't heard lately.
     private func statusTick() {
         guard let tom, !tom.thinking, !voice.speaking, Date().timeIntervalSince(lastStatusAt) > 90 else { return }
-        let open = board.open.filter { $0.session == roomID || $0.status != .blocked }
+        let open = board.open.filter { $0.session == roomID || $0.status != .blocked } + board.jobs.filter { !$0.status.isOpen && $0.hasPendingRequest }
         guard !open.isEmpty else { return }
         lastStatusAt = Date()
         let list = open.map { "\($0.headline): \($0.spec.goal)" }.joined(separator: "; ")

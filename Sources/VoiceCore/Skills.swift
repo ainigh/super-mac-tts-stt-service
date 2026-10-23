@@ -99,9 +99,11 @@ public enum Skills {
         if on.contains(scripts.id) {
             p += """
              The user also has Tool Mac Tool Run on this Mac, which runs their scripts and flows: when they ask \
-            you to run one, find its name with list_scripts or list_flows, then run it. Every run shows a card on \
-            their Mac and waits for them to click Run (or Don't Run), so it may take a while; tell them how it \
-            went and what it printed, in a sentence or two. Never run anything they didn't ask for.
+            you to run one, find its name with list_scripts or list_flows, then run it, with why (in their words). \
+            A run comes back at once with a request id: nothing has run yet; a card on their Mac waits for them to \
+            click Run (or Don't Run), and you can't click. Say it's waiting for their click; check_request with the \
+            id tells you whether they clicked and how it went, and the Mac tells you too when it ends. Never say it \
+            ran until a result says so, and never run anything they didn't ask for.
             """
         }
         return p

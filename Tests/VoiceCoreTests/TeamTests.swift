@@ -25,7 +25,7 @@ final class TeamTests: XCTestCase {
         XCTAssertTrue(chat.tools.contains { $0.name == "list_chats" })
         chat.team = .lead(teammate: "Jerry")
         XCTAssertEqual(chat.activeSkills.map(\.id), ["team"])
-        XCTAssertEqual(chat.tools.map(\.name), ["delegate", "job_status", "message_jerry", "cancel_job"])
+        XCTAssertEqual(chat.tools.map(\.name), ["delegate", "job_status", "message_jerry", "cancel_job", "stop_everything"])
         XCTAssertTrue(chat.systemPrompt().contains("- delegate:"))
         XCTAssertTrue(chat.systemPrompt().contains("You are the supervisor"))
         XCTAssertTrue(chat.systemPrompt().hasPrefix("You are Tom,"))

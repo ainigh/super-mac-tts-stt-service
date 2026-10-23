@@ -456,6 +456,8 @@ struct AssistantView: View {
         case "delegate": return "a job for \(Team.teammate)"
         case "message_jerry": return "a message to \(Team.teammate)"
         case "cancel_job": return "cancelling a job"
+        case "stop_everything": return "stopping everything"
+        case "check_request": return "a run's standing"
         case "job_status": return "a job's standing"
         case "ask_tom": return "asking \(Assistant.name)"
         case "finish": return "finishing a job"
@@ -947,6 +949,9 @@ private struct JobRow: View {
                     Text(job.spec.text).font(.system(size: 12)).textSelection(.enabled)
                     if let q = job.blockedOn {
                         Text("\(Team.teammate) asks: \(q)").font(.system(size: 12)).foregroundStyle(Palette.orange)
+                    }
+                    ForEach(job.requests) { r in
+                        Text("Run on the Mac: " + r.line).font(.system(size: 12)).foregroundStyle(r.over ? .secondary : Palette.orange)
                     }
                     if let r = job.result {
                         Text("Result: \(r.summary)").font(.system(size: 12, weight: .medium)).textSelection(.enabled)
