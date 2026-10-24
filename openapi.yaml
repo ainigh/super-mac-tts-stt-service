@@ -162,6 +162,62 @@ paths:
                 properties:
                   ok: {type: boolean}
                   stopped: {type: integer}
+  /api/model:
+    get:
+      tags: [native]
+      summary: Which model answers /api/model/chat (AI Listen's)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  model: {type: string}
+                  ready: {type: boolean}
+  /api/model/chat:
+    post:
+      tags: [native]
+      summary: One answer from AI Listen's model, kept to a JSON schema if one is given
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role: {type: string, enum: [system, user, assistant]}
+                      content: {type: string}
+                format:
+                  description: A JSON schema the answer keeps to, or "json"
+                temperature: {type: number}
+                think: {type: boolean, default: false}
+      responses:
+        "200":
+          description: The answer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  model: {type: string}
+                  message:
+                    type: object
+                    properties:
+                      role: {type: string}
+                      content: {type: string}
+                  ms: {type: integer}
+        "400": {$ref: "#/components/responses/Error"}
+        "502": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
   /v1/models:
     get:
       tags: [openai]

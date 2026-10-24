@@ -55,7 +55,7 @@ public protocol SpeechEngine: AnyObject {
 
 /// The endpoint groups, each of which can be turned off.
 public enum Endpoint: String, CaseIterable, Codable, Sendable {
-    case tts, stt, transcribe, say, openai
+    case tts, stt, transcribe, say, openai, model
 
     public var title: String {
         switch self {
@@ -64,6 +64,7 @@ public enum Endpoint: String, CaseIterable, Codable, Sendable {
         case .transcribe: return "Transcribe files"
         case .say: return "Speak on this Mac"
         case .openai: return "OpenAI-compatible"
+        case .model: return "The model, for other apps"
         }
     }
 
@@ -74,6 +75,7 @@ public enum Endpoint: String, CaseIterable, Codable, Sendable {
         case .transcribe: return "/api/transcribe"
         case .say: return "/api/say"
         case .openai: return "/v1/audio/*"
+        case .model: return "/api/model/chat"
         }
     }
 }
@@ -89,10 +91,28 @@ public struct ServiceSettings: Equatable, Codable, Sendable {
     /// Browser origins allowed besides this machine's pages ("https://app.example.com", globs).
     public var origins: [String] = []
     public var port = ServiceSettings.defaultPort
+    /// Super Face (the mouth and the face): where it is, and whether what's said goes through it.
+    public var face = FaceClient.defaultURL
+    public var speakThroughFace = true
 
     public static let defaultPort = 8767
 
     public init() {}
+
+    // Settings saved before a field existed still load, taking its default.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = ServiceSettings()
+        off = try c.decodeIfPresent(Set<Endpoint>.self, forKey: .off) ?? d.off
+        voice = try c.decodeIfPresent(String.self, forKey: .voice) ?? d.voice
+        speed = try c.decodeIfPresent(Double.self, forKey: .speed) ?? d.speed
+        allowNetwork = try c.decodeIfPresent(Bool.self, forKey: .allowNetwork) ?? d.allowNetwork
+        token = try c.decodeIfPresent(String.self, forKey: .token) ?? d.token
+        origins = try c.decodeIfPresent([String].self, forKey: .origins) ?? d.origins
+        port = try c.decodeIfPresent(Int.self, forKey: .port) ?? d.port
+        face = try c.decodeIfPresent(String.self, forKey: .face) ?? d.face
+        speakThroughFace = try c.decodeIfPresent(Bool.self, forKey: .speakThroughFace) ?? d.speakThroughFace
+    }
 
     public func isOn(_ e: Endpoint) -> Bool { !off.contains(e) }
 

@@ -22,6 +22,8 @@ final class Service: ObservableObject {
     private var http: APIServer!
     private let lock = NSLock()
     private var settingsNow: ServiceSettings
+    /// The model other apps get (POST /api/model/chat): AI Listen's, kept here for the server's threads.
+    private var modelNow = (url: OllamaClient.defaultURL, model: "")
     private var watching: Set<AnyCancellable> = []
 
     static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0-dev"
@@ -42,8 +44,11 @@ final class Service: ObservableObject {
         settingsNow = loaded
         wantsServing = defaults.object(forKey: "serving") as? Bool ?? true
         engine = MacEngine(speaker: speaker)
+        speaker.throughFace = true
+        let model = OllamaModelAccess { [weak self] in self?.currentModel ?? (url: OllamaClient.defaultURL, model: "") }
         api = VoiceAPI(engine: engine, version: Self.version,
-                       directory: FileManager.default.temporaryDirectory.appendingPathComponent("SuperVoice", isDirectory: true)) { [weak self] in
+                       directory: FileManager.default.temporaryDirectory.appendingPathComponent("SuperVoice", isDirectory: true),
+                       model: model) { [weak self] in
             self?.currentSettings ?? ServiceSettings()
         }
         http = APIServer(api: api)
@@ -57,6 +62,20 @@ final class Service: ObservableObject {
         lock.lock()
         defer { lock.unlock() }
         return settingsNow
+    }
+
+    /// The model AI Listen talks with, for the server's threads.
+    private var currentModel: (url: String, model: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        return modelNow
+    }
+
+    /// AI Listen's model changed (or was first read): other apps get the same one.
+    func useModel(url: String, model: String) {
+        lock.lock()
+        modelNow = (url: url, model: model)
+        lock.unlock()
     }
 
     /// At launch: serve if it was serving, and get both models going so the first call is quick.

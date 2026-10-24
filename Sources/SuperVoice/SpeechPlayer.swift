@@ -16,6 +16,8 @@ final class SpeechPlayer: ObservableObject {
     @Published var problem: String?
     /// Nothing left to say (it finished, not stopped).
     var onDone: (() -> Void)?
+    /// What it says goes through Super Face (the avatar) while that's running; else it's said here.
+    var throughFace = false
 
     private struct Line {
         var text: String
@@ -25,6 +27,10 @@ final class SpeechPlayer: ObservableObject {
         var item: Int
         /// Where it starts in that item's text (UTF-16).
         var offset: Int
+        /// Said by Super Face: the whole item in one line (the face cuts it into sentences itself).
+        var face = false
+        /// Who's saying it (Tom, Jerry, Jane), for the face.
+        var who: String?
     }
 
     /// The engine shared with a microphone, echo cancelled (AI Listen's), or nil: its own.
@@ -67,6 +73,8 @@ final class SpeechPlayer: ObservableObject {
     /// sentence, with everything still queued.
     private func interrupted() {
         guard busy || !lines.isEmpty else { return }
+        // What Super Face is saying doesn't go through this engine: it carries on.
+        if playing?.face == true { return }
         var again: [Line] = []
         if let playing { again.append(playing) }
         if let ahead { again.append(ahead.line) }
@@ -91,13 +99,18 @@ final class SpeechPlayer: ObservableObject {
     /// Queues `text` and returns its number; `done` runs on the main thread once all of it has
     /// been heard (not if it's stopped first; nothing to say, it runs at once).
     @discardableResult
-    func add(_ text: String, voice: Voice, speed: Double, done: (() -> Void)? = nil) -> Int {
+    func add(_ text: String, voice: Voice, speed: Double, who: String? = nil, done: (() -> Void)? = nil) -> Int {
         items += 1
         let item = items
         let ns = text as NSString
         var searchFrom = 0
         var any = false
-        for sentence in SpokenText.sentences(text) {
+        let whole = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if throughFace, FaceLink.shared.speaks, !whole.isEmpty {
+            lines.append(Line(text: whole, voice: voice, speed: speed, item: item, offset: 0, face: true, who: who))
+            any = true
+        }
+        for sentence in any ? [] : SpokenText.sentences(text) {
             let r = ns.range(of: sentence, range: NSRange(location: searchFrom, length: ns.length - searchFrom))
             let offset = r.location == NSNotFound ? searchFrom : r.location
             if r.location != NSNotFound { searchFrom = r.location + r.length }
@@ -155,6 +168,11 @@ final class SpeechPlayer: ObservableObject {
         paused = false
         pausedAt = nil
         word = nil
+        // What the face was given stops there too (only what this app gave it).
+        if throughFace, dropped > 0, FaceLink.shared.up {
+            let face = FaceLink.shared.client
+            Task.detached { await face.stop() }
+        }
         return dropped
     }
 
@@ -174,8 +192,28 @@ final class SpeechPlayer: ObservableObject {
     }
 
     private func render(_ line: Line) -> Task<[Float], Error> {
-        Task.detached(priority: .userInitiated) {
-            try await Neural.shared.speak(line.text, voice: line.voice, speed: line.speed)
+        guard line.face else {
+            return Task.detached(priority: .userInitiated) {
+                try await Neural.shared.speak(line.text, voice: line.voice, speed: line.speed)
+            }
+        }
+        // Said by the face: done (no audio here) once it's been said. If the face isn't there
+        // after all, or its voice is still downloading, it's said here instead.
+        let face = FaceLink.shared.client
+        return Task.detached(priority: .userInitiated) {
+            do {
+                _ = try await face.speak(line.text, voice: line.voice.id, speed: line.speed, who: line.who)
+                return []
+            } catch {
+                NSLog("Super Face didn't say it (%@): said here instead", String(describing: error))
+                if (error as? FaceClient.Problem) == .unreachable { DispatchQueue.main.async { FaceLink.shared.lost() } }
+                var samples: [Float] = []
+                for sentence in SpokenText.sentences(line.text) {
+                    try Task.checkCancellation()
+                    samples += try await Neural.shared.speak(sentence, voice: line.voice, speed: line.speed)
+                }
+                return samples
+            }
         }
     }
 

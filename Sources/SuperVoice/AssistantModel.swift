@@ -327,6 +327,8 @@ final class AssistantModel: ObservableObject {
         runner = Self.runner(for: loaded)
         runnerURL = loaded.toolRunURL
         listener.name = "AI Listen"
+        voice.throughFace = true
+        Service.shared.useModel(url: loaded.ollamaURL, model: loaded.model)
         wakeListener.name = "Always listen"
         listener.onUtterance = { [weak self] said in self?.heard(said) }
         wakeListener.onUtterance = { [weak self] said in self?.wakeHeard(said) }
@@ -557,6 +559,19 @@ final class AssistantModel: ObservableObject {
     private func wakeHeard(_ utterance: String) {
         NSLog("Always listen heard: %@ (on: %d, listen: %d, mic busy: %d)", utterance, on ? 1 : 0, alwaysListen ? 1 : 0, micBusy ? 1 : 0)
         guard !on, alwaysListen, !micBusy else { return }
+        // "Tom" said by the avatar (for another app) isn't the user calling.
+        FaceLink.shared.screen(utterance) { [weak self] mine in
+            guard let self else { return }
+            guard let mine else {
+                NSLog("Always listen took that for Super Face's own voice: %@", utterance)
+                return
+            }
+            self.wakeHeardChecked(mine)
+        }
+    }
+
+    private func wakeHeardChecked(_ utterance: String) {
+        guard !on, alwaysListen, !micBusy else { return }
         switch Assistant.hear(utterance, awake: false) {
         case .wake, .command(.newChat): start(called: true)
         case .wakeThen(let question): start(question: question)
@@ -579,6 +594,21 @@ final class AssistantModel: ObservableObject {
     func heard(_ utterance: String) {
         NSLog("AI Listen heard: %@ (on: %d, mic busy: %d, speaking: %d, echo cancelled: %d)", utterance, on ? 1 : 0,
               micBusy ? 1 : 0, voice.speaking ? 1 : 0, Self.echo.cancelsEcho ? 1 : 0)
+        guard on, !micBusy else { return }
+        // What Super Face said (for this app or any other) coming back through the microphone is
+        // dropped: the face knows what it said and when, and is asked.
+        FaceLink.shared.screen(utterance) { [weak self] mine in
+            guard let self else { return }
+            guard let mine else {
+                NSLog("AI Listen took that for Super Face's own voice: %@", utterance)
+                return
+            }
+            self.act(on: mine)
+        }
+    }
+
+    /// What was heard, once it's known not to be the face's own voice.
+    private func act(on utterance: String) {
         guard on, !micBusy else { return }
         idleAsked = false
         var said = utterance
@@ -1508,7 +1538,7 @@ final class AssistantModel: ObservableObject {
         if settings.voicePrints { VoicePrints.shared.enroll(v) }
         reading = Recorder.join(reading, spoken)
         var item = 0
-        item = voice.add(spoken, voice: v, speed: Service.shared.settings.speed) { [weak self] in
+        item = voice.add(spoken, voice: v, speed: Service.shared.settings.speed, who: name) { [weak self] in
             guard let self else { return }
             self.queued.removeAll { $0.item == item }
             self.speaking = self.queued.first?.name
@@ -1635,6 +1665,7 @@ final class AssistantModel: ObservableObject {
         let newVoice = s.jerryVoice != settings.jerryVoice || s.janeVoice != settings.janeVoice
         settings = s
         if let data = try? JSONEncoder().encode(s) { UserDefaults.standard.set(data, forKey: "assistantSettings") }
+        Service.shared.useModel(url: s.ollamaURL, model: s.model)
         if moved {
             client = OllamaClient(baseURL: s.ollamaURL)
             ollamaVersion = nil
