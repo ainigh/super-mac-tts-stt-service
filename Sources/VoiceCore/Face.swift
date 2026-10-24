@@ -70,10 +70,17 @@ public final class FaceClient {
 
     // MARK: Calls
 
-    /// Running, and answering.
+    /// Its health says it can speak: the avatar loaded and the voice ready. Answering isn't
+    /// enough: a face whose avatar didn't load would take what's said and never say it.
+    public static func ready(status: Int, _ data: Data) -> Bool {
+        guard status == 200, let o = JSON.object(data), o["service"] as? String == "superface" else { return false }
+        return o["ready"] as? Bool == true
+    }
+
+    /// Running, and ready to speak.
     public func isUp() async -> Bool {
         guard let (status, data) = try? await send("GET", "/api/health", timeout: 2) else { return false }
-        return status == 200 && JSON.object(data)?["service"] as? String == "superface"
+        return Self.ready(status: status, data)
     }
 
     /// Says `text` (the face shows itself) and returns once it's been said, or stopped.

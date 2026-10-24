@@ -138,6 +138,15 @@ final class FaceTests: XCTestCase {
         XCTAssertNil(FaceClient.echo(Data("nope".utf8)))
     }
 
+    func testOnlyAFaceThatCanSpeakIsUsed() {
+        XCTAssertTrue(FaceClient.ready(status: 200, Data(#"{"service": "superface", "ready": true}"#.utf8)))
+        // Its avatar didn't load, it's still starting, or it's a version that doesn't say.
+        XCTAssertFalse(FaceClient.ready(status: 200, Data(#"{"service": "superface", "ready": false, "avatar": "failed"}"#.utf8)))
+        XCTAssertFalse(FaceClient.ready(status: 200, Data(#"{"service": "superface", "avatar": "loading"}"#.utf8)))
+        XCTAssertFalse(FaceClient.ready(status: 200, Data(#"{"service": "supervoice", "ready": true}"#.utf8)))
+        XCTAssertFalse(FaceClient.ready(status: 503, Data()))
+    }
+
     func testTheFaceAddressIsTidied() {
         XCTAssertEqual(FaceClient(baseURL: "127.0.0.1:8769/").baseURL.absoluteString, "http://127.0.0.1:8769")
         XCTAssertEqual(FaceClient(baseURL: "  ").baseURL.absoluteString, FaceClient.defaultURL)
