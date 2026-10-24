@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.onCancel = { [weak self] in self?.hide() }
         panel.onMouseMoved = { [weak self] in self?.noteActivity() }
         Service.shared.launch()
+        FaceLink.shared.start()
         AssistantModel.shared.launch()
         Updater.shared.start()
         // The icon says what's going on.

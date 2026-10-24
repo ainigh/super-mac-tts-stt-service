@@ -4,6 +4,8 @@ import Foundation
 public final class VoiceAPI {
     public let engine: SpeechEngine
     public let version: String
+    /// The model, for other apps (nil: none here, as in tests that don't need one).
+    public let model: ModelAccess?
     private let settings: () -> ServiceSettings
     private let directory: URL
     private let started = Date()
@@ -11,9 +13,10 @@ public final class VoiceAPI {
     public static let maxText = 20_000
 
     public init(engine: SpeechEngine, version: String, directory: URL = FileManager.default.temporaryDirectory,
-                settings: @escaping () -> ServiceSettings) {
+                model: ModelAccess? = nil, settings: @escaping () -> ServiceSettings) {
         self.engine = engine
         self.version = version
+        self.model = model
         self.directory = directory
         self.settings = settings
     }
@@ -42,6 +45,7 @@ public final class VoiceAPI {
         "/": "GET", "/index.html": "GET", "/favicon.ico": "GET", "/api.md": "GET", "/api/health": "GET", "/api/voices": "GET",
         "/api/tts": "POST", "/api/stt": "POST", "/api/transcribe": "POST", "/api/say": "POST",
         "/api/say/stop": "POST", "/v1/models": "GET", "/v1/audio/speech": "POST", "/v1/audio/transcriptions": "POST",
+        "/api/model": "GET", "/api/model/chat": "POST",
     ]
 
     private func route(_ req: HTTPRequest, _ s: ServiceSettings) async throws -> HTTPResponse {
@@ -80,6 +84,13 @@ public final class VoiceAPI {
         case "/api/say/stop":
             try need(.say, s)
             return JSON.response(["ok": true, "stopped": engine.stopSaying()])
+        case "/api/model":
+            try need(.model, s)
+            let name = model?.modelName ?? ""
+            return JSON.response(["model": name, "ready": !name.isEmpty])
+        case "/api/model/chat":
+            try need(.model, s)
+            return try await modelChat(req)
         case "/v1/models":
             try need(.openai, s)
             let created = 1_767_225_600
@@ -109,6 +120,7 @@ public final class VoiceAPI {
             "models": ["tts": model("kokoro-82m", engine.ttsState), "stt": model("parakeet-tdt-0.6b-v3", engine.sttState)],
         ]
         for e in Endpoint.allCases { out[e.rawValue] = s.isOn(e) }
+        out["face"] = ["url": s.face, "speak_through": s.speakThroughFace]
         return out
     }
 
@@ -190,6 +202,51 @@ public final class VoiceAPI {
         let speed = try speedField(fields["speed"], default: s.speed)
         let pcm = (fields["response_format"] as? String)?.lowercased() == "pcm"
         return try await speech(text, voice: voice, speed: speed, wav: !pcm, stream: false)
+    }
+
+    // MARK: The model
+
+    /// One answer from the model AI Listen talks with: `messages` as Ollama takes them, `format` a
+    /// JSON schema (or "json") the answer keeps to.
+    private func modelChat(_ req: HTTPRequest) async throws -> HTTPResponse {
+        guard let fields = JSON.object(try req.body.data()) else {
+            throw HTTPError(status: 400, code: "bad_request", message: "send JSON: {\"messages\": [{\"role\", \"content\"}], \"format\"}")
+        }
+        guard let raw = fields["messages"] as? [[String: Any]], !raw.isEmpty else {
+            throw HTTPError(status: 400, code: "bad_request", message: "messages is a list of {\"role\", \"content\"}")
+        }
+        var messages: [[String: Any]] = []
+        for m in raw {
+            guard let role = m["role"] as? String, ["system", "user", "assistant"].contains(role), let content = m["content"] as? String else {
+                throw HTTPError(status: 400, code: "bad_request", message: "each message has a role (system, user or assistant) and a content")
+            }
+            messages.append(["role": role, "content": content])
+        }
+        guard messages.reduce(0, { $0 + (($1["content"] as? String)?.count ?? 0) }) <= 100_000 else {
+            throw HTTPError(status: 413, code: "too_large", message: "the messages are over 100,000 characters")
+        }
+        let format = fields["format"].flatMap { $0 is NSNull ? nil : $0 }
+        if let f = format, !(f is [String: Any]), (f as? String) != "json" {
+            throw HTTPError(status: 400, code: "bad_request", message: "format is a JSON schema or \"json\"")
+        }
+        let temperature = (fields["temperature"] as? NSNumber)?.doubleValue
+        let think = fields["think"] as? Bool ?? false
+        guard let model else {
+            throw HTTPError(status: 503, code: "no_model", message: "no model here")
+        }
+        let started = Date()
+        let content: String
+        do {
+            content = try await model.chat(messages: messages, format: format, temperature: temperature, think: think)
+        } catch let e as AssistantError {
+            switch e {
+            case .unreachable: throw HTTPError(status: 502, code: "model_unreachable", message: e.localizedDescription)
+            case .noModel: throw HTTPError(status: 503, code: "no_model", message: e.localizedDescription)
+            default: throw HTTPError(status: 502, code: "model_failed", message: e.localizedDescription)
+            }
+        }
+        return JSON.response(["model": model.modelName, "message": ["role": "assistant", "content": content],
+                              "ms": Int(Date().timeIntervalSince(started) * 1000)])
     }
 
     // MARK: Listening

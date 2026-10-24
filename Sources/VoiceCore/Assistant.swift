@@ -1258,6 +1258,11 @@ public final class OllamaClient: LanguageModel {
         return try await send(req)
     }
 
+    /// POST to Ollama, for the other calls made through this client (Model.swift).
+    func postJSON(_ path: String, _ body: [String: Any]) async throws -> Data {
+        try await post(path, body)
+    }
+
     private func post(_ path: String, _ body: [String: Any]) async throws -> Data {
         var req = URLRequest(url: baseURL.appendingPathComponent(path), timeoutInterval: timeout)
         req.httpMethod = "POST"

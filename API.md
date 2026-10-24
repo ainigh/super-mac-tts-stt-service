@@ -5,6 +5,8 @@ serves both to any other app over HTTP, the way Ollama serves models:
 
 - **TTS**: Kokoro-82M, six voices (three women, three men).
 - **STT**: Parakeet TDT v3 (25 European languages, detected by itself).
+- **The model**: the Ollama model AI Listen talks with, for other apps that need one (Super Face
+  asks it which expression goes with each sentence).
 
 Both run on Apple's Neural Engine through [FluidAudio](https://github.com/FluidInference/FluidAudio),
 the same engine and voices as Tool Mac Tool. Each model downloads once (a few hundred MB, into
@@ -56,6 +58,8 @@ curl -s localhost:8767/v1/audio/transcriptions -F file=@note.m4a -F model=parake
 | `GET  /v1/models` | `openai` | OpenAI-compatible model list |
 | `POST /v1/audio/speech` | `openai` + `tts` | OpenAI-compatible TTS |
 | `POST /v1/audio/transcriptions` | `openai` + `stt` | OpenAI-compatible STT |
+| `GET  /api/model` | `model` | which model answers `/api/model/chat` |
+| `POST /api/model/chat` | `model` | one answer from that model, to a JSON schema if you give one |
 | `GET  /` | — | a status page, with a box to try each endpoint |
 | `GET  /api.md` | — | this document, as `text/markdown` (with the port it's actually on) |
 
@@ -75,7 +79,8 @@ stopped, connections are refused. `GET /api/health` always says what's on.
   "version": "0.1.0",
   "port": 8767,
   "uptime": 3641,
-  "tts": true, "stt": true, "transcribe": true, "say": true, "openai": true,
+  "tts": true, "stt": true, "transcribe": true, "say": true, "openai": true, "model": true,
+  "face": {"url": "http://127.0.0.1:8769", "speak_through": true},
   "models": {
     "tts": {"name": "kokoro-82m",          "state": "ready"},
     "stt": {"name": "parakeet-tdt-0.6b-v3", "state": "downloading", "progress": 0.42}
@@ -86,6 +91,8 @@ stopped, connections are refused. `GET /api/health` always says what's on.
 - The top-level booleans say which endpoint groups are on. (They're the same keys glassvoice's
   health uses, so clients that check `health.tts` work against either.)
 - `port` is the port it's listening on and `uptime` how many seconds it has been serving.
+- `face` is where Super Face is looked for, and whether what Super Voice says goes through it (see
+  *Super Face*).
 - `models.*.state` is one of `not_loaded` (loads on first use), `downloading` (with `progress`, 0
   to 1), `loading`, `ready`, `failed` (with `message`).
 
@@ -235,9 +242,55 @@ with open("meeting.mp3", "rb") as f:
 {"text": "Build finished", "voice": "m1", "speed": 1.0}
 ```
 
-Speaks on this Mac's speakers, in turn after anything already queued, and answers at once:
+Speaks on this Mac's speakers (through Super Face's avatar while it runs; see *Super Face*), in turn
+after anything already queued, and answers at once:
 `202 {"ok": true, "id": "9F2C…", "queued": 1}`. `POST /api/say/stop` stops it and empties the
 queue: `{"ok": true, "stopped": 2}`.
+
+### `GET /api/model` and `POST /api/model/chat`
+
+Super Voice is where the model is: other apps that need one (Super Face, to choose its expressions)
+ask it here rather than going to Ollama themselves, and get the model AI Listen talks with (Tom's),
+so one model serves both. If none has been picked yet, it's the first one Ollama has.
+
+```bash
+curl -s localhost:8767/api/model
+# {"model":"qwen3:4b","ready":true}
+
+curl -s localhost:8767/api/model/chat -d '{
+  "messages": [{"role": "system", "content": "Answer with JSON."}, {"role": "user", "content": "Is the sky blue?"}],
+  "format": {"type": "object", "properties": {"yes": {"type": "boolean"}}, "required": ["yes"]},
+  "temperature": 0}'
+# {"model":"qwen3:4b","message":{"role":"assistant","content":"{\"yes\": true}"},"ms":412}
+```
+
+| field | | |
+|---|---|---|
+| `messages` | required | `[{"role", "content"}]`, the role `system`, `user` or `assistant`; up to 100,000 characters in all |
+| `format` | optional | a JSON schema the answer keeps to (Ollama's structured outputs), or `"json"` |
+| `temperature` | optional | 0 for the same answer each time |
+| `think` | optional | `true` lets a thinking model think first (slower); off by default |
+
+The answer isn't streamed; any thinking is taken out of `content`. Errors: `503 no_model` (Ollama has
+no model), `502 model_unreachable` (Ollama isn't running), `502 model_failed`.
+
+---
+
+## Super Face
+
+[Super Face](https://github.com/ainigh/JUST-super-mac-tts-ONLY-service) is the mouth and the face: a
+3D avatar on the desktop, its own app, with its own API at `http://127.0.0.1:8769`. Super Voice is
+the ears and the model. While Super Face is running (and *Speak through Super Face* is on in the
+panel, as it is unless switched off):
+
+- What Super Voice says (AI Listen's Tom, Jerry and Jane, and `/api/say`) is said by the avatar, in
+  the same voice, with lip-sync and expressions. When Super Face isn't running, or its voice is still
+  downloading, the Mac's own Kokoro voice says it, as before. `/api/tts` and `/v1/audio/speech`
+  still answer audio from Super Voice's own Kokoro.
+- Every phrase Super Voice hears is first checked with Super Face (`POST /api/echo`): the face knows
+  what it said and when, so the avatar's voice coming back through the microphone is told from yours
+  by the words, and dropped. That covers what the avatar says for other apps too.
+- Super Face's expressions come from `POST /api/model/chat`: one model on the Mac, here.
 
 ---
 
@@ -294,6 +347,7 @@ Errors on `/v1/*` have OpenAI's shape: `{"error": {"message", "type", "code"}}`.
 | 413 | `too_large` | text over 20,000 characters, or a body over 2 GB |
 | 415 | `unsupported_audio` | the audio couldn't be read |
 | 503 | `endpoint_off` | that endpoint is turned off in the app |
+| 503, 502 | `no_model`, `model_unreachable`, `model_failed` | `/api/model/chat`: no model in Ollama, Ollama not running, or it failed |
 | 503 | `model_loading` | the model is still downloading for the first time; has `progress`, and a `Retry-After` header |
 | 500 | `failed` | anything else; `error` says what |
 

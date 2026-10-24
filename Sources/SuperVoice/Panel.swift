@@ -10,6 +10,8 @@ struct PanelView: View {
     @ObservedObject var assistant = AssistantModel.shared
     /// Watched, so the counts on the tiles change while the panel's open.
     @ObservedObject var library = Library.shared
+    /// Super Face, the avatar: whether it's running.
+    @ObservedObject var face = FaceLink.shared
     var close: () -> Void
     /// What was just copied ("url", "docs", "token"), shown as a check for a moment.
     @State private var copied: String?
@@ -34,6 +36,7 @@ struct PanelView: View {
                     Divider().opacity(0.5)
                     endpoints
                     sharing
+                    faceRow
                 }
                 .frame(width: Self.columnWidth, alignment: .topLeading)
             }
@@ -291,6 +294,33 @@ struct PanelView: View {
                         .buttonStyle(.borderless).help("Make a new token (the old one stops working)")
                 }
             }
+        }
+    }
+
+    // MARK: Super Face
+
+    /// Super Face, the mouth and the face: what's said goes through it while it runs.
+    private var faceRow: some View {
+        HStack(spacing: 8) {
+            Circle().fill(face.up ? Color.green : Color.secondary.opacity(0.4)).frame(width: 7, height: 7)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Speak through Super Face").font(.system(size: 12, weight: .medium))
+                Text(face.up ? "The avatar says it, at \(service.settings.face)" : "Not running: the Mac's own voice says it")
+                    .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer()
+            if !face.up {
+                Button("Get it") {
+                    NSWorkspace.shared.open(URL(string: "https://github.com/ainigh/JUST-super-mac-tts-ONLY-service#install")!)
+                }
+                .buttonStyle(.borderless).font(.system(size: 11))
+                .help("Super Face: a 3D avatar that says what Super Voice says, with expressions")
+            }
+            Toggle("", isOn: Binding(get: { service.settings.speakThroughFace }, set: { on in service.change { $0.speakThroughFace = on } }))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+                .help("While Super Face runs, AI Listen's voices and /api/say are said by the avatar; what it says is never taken for you")
         }
     }
 
